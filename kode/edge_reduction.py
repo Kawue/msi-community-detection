@@ -42,6 +42,24 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber):
 	# Extract the first PCA Component, i.e. data projection on the first pca axis (eigenvector)
 	first_pca_component = matrix_transformed[:, 0]
 
+	# Plotting stuff
+	plt.figure()
+	plt.title("Network Measures", fontsize=20, y=1.01)
+	plt.xlabel("Candidate Thresholds ($\mathbf{t}$)", fontsize=20, labelpad=15)
+	plt.ylabel("Measure Values", fontsize=20, labelpad=15)
+	plt.xticks(size=15)
+	plt.yticks(size=15)
+	threshold_list = threshold_list[:]
+	plt.plot(threshold_list, first_pca_component, "-d", color="red", label="$\mathbf{y}$")
+	plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$\mathbf{\nu}^{N_E}$")
+	plt.plot(threshold_list, acc_values[:], "-s", color="blue", label=r"$\mathbf{\nu}^\zeta$")
+	plt.plot(threshold_list, eff_values[:], "-D", color="peru", label=r"$\mathbf{\nu}^\xi$")
+	plt.plot(threshold_list, acc_diff_edges[:], "-p", color="darkviolet", label=r"$\mathbf{\eta}^\zeta$")
+	plt.plot(threshold_list, eff_diff_edges[:], "-o", color="brown", label=r"$\mathbf{\eta}^\xi$")
+	plt.legend(fontsize=15)
+	plt.show()
+
+
 	max_value = np.amax(first_pca_component)
 	max_idx = np.argmax(first_pca_component)
 	t = threshold_list[max_idx]

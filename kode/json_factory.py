@@ -3,8 +3,8 @@ import igraph as ig
 import numpy as np
 import os
 import community as louvain
-
-def build_json(hierarchy_dict, h5_data, dataset_name, graph, json):
+##### !!!!! This json uses a modified version of community_louvain.json, which includes a edge attribute named 'count' to calculate the mean edge weight of community graphs !!!!! #####
+def build_json(hierarchy_dict, h5_data, dataset_name, graph, json, threshold):
 	# data set dict
 	ds_dict = {}
 
@@ -59,13 +59,19 @@ def build_json(hierarchy_dict, h5_data, dataset_name, graph, json):
 		idx = 0
 		for source, target, weight in edges:
 			# Include source == target for inner edge weight.
+			#print(weight)
 			if source != target:
 				a_dict = {}
 				a_dict["index"] = idx
 				a_dict["name"] = "h%ie%i"%(hidx,idx)
 				a_dict["source"] = "h%in%i"%(hidx,source)
 				a_dict["target"] = "h%in%i"%(hidx,target)
-				a_dict["weight"] = weight["weight"]
+				try:
+					count = weight["count"]
+				except:
+					count = 1
+				#print(count)
+				a_dict["weight"] = weight["weight"] / count
 				e_dict["h%ie%i"%(hidx,idx)] = a_dict
 				idx += 1
 			
@@ -75,8 +81,10 @@ def build_json(hierarchy_dict, h5_data, dataset_name, graph, json):
 
 	ds_dict["graph"] = g_dict
 	ds_dict["dataset"] = dataset_name
+	ds_dict["threshold"] = threshold
 
-	mzs = [x for x in np.round(h5_data.columns, 3)]
+	#mzs = [x for x in np.round(h5_data.columns, 3)]
+	mzs = [x for x in h5_data.columns]
 	mzs_dict = {}
 	for mz in mzs:
 		mzs_dict[str(mz)] = {}
@@ -87,13 +95,13 @@ def build_json(hierarchy_dict, h5_data, dataset_name, graph, json):
 						mzs_dict[str(mz)][hy] = nid
 						break
 				# Last hierarchy has no "mzs" prop
-				except:
+				except Exception as e:
+					print(e)
 					if mz == props["name"]:
 						mzs_dict[str(mz)][hy] = nid
 
 
 	ds_dict["mzs"] = mzs_dict
-
 
 	json["graphs"]["graph%i"%(hierarchy_dict["graph_idx"])] = ds_dict
 

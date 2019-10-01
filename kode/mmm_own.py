@@ -159,7 +159,7 @@ def leading_eigenvector_community(adjacency_matrix, number_boundary=None, ker_li
                     #connected_community, improved = kernighan_lin_n_groups_direct_swap(connected_community, adjacency_matrix)
                     if improved == False:
                         swapped_communities.extend(connected_community)
-                        break;
+                        break
             else:
                 swapped_communities.extend(connected_community)
 

@@ -55,11 +55,28 @@ def community_graph(vertex_clustering_object, graph, edge_combination):
 	return c_graph
 
 
+def calc_dendro_for_ig(community_list):
+	dendro = [{}]
+	for memb, community in enumerate(community_list):
+		for vertex in community:
+			dendro[0][vertex] = memb
+
+	inv_dendro = []
+	for dct in dendro:
+		inv_dct = {}
+		for k,v in dct.items(): 
+			inv_dct.setdefault(v,[]).append(k)
+		inv_dendro.append(inv_dct)
+	return dendro, inv_dendro
+
+
 # Calculate Louvain method for community detection
 # Level is calculated from behind, i.e. 0 is the highest level, i.e. level-n.
 def calc_louvain(adj_matrix, level = 0, return_c_graph = False):
 	nx_G = nx.from_numpy_array(adj_matrix)
 	dendro = louvain.generate_dendrogram(nx_G, randomize=False) #Maybe set randomize True
+	#print(dendro)
+	#asdasd
 
 	level = len(dendro) - level - 1
 
@@ -90,7 +107,7 @@ def calc_louvain(adj_matrix, level = 0, return_c_graph = False):
 	inv_dendro = []
 	for dct in dendro:
 		inv_dct = {}
-		for k,v in dct.items():
+		for k,v in dct.items(): 
 			inv_dct.setdefault(v,[]).append(k)
 		inv_dendro.append(inv_dct)
 
