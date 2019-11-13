@@ -8,13 +8,15 @@ conda env create -f environment.yml
 ```
 Therafter activate the environment via:
 ```
-conda acticate grine
+conda activate grine
 ```
 And call:
 ```
 python main.py -h
 ```
 to get all needed parameter information.
+
+If your data is in `.imzML` and `.ibd` format instead of HDF5 we refer to our preprocessing pipeline [A Mad Pie](https://github.com/Kawue/amadpie/) for a proper conversion. For a self written processing we refer to [pyImzML-Parser](https://github.com/alexandrovteam/pyimzML/blob/master/pyimzml/ImzMLParser.py) and [Pandas](https://pandas.pydata.org/) .
 
 
 [1]: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-019-2890-6
