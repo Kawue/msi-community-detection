@@ -15,10 +15,11 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 	winsorize(h5_data, limits=(0, 0.01), axis=0, inplace=True)
 
 	# Convert hdf data in numpy array; desired structure Samples = m/z-images, Features = Pixel
-	data = h5_data.as_matrix().transpose()
+	data = h5_data.values().transpose()
 
 	# Calculate similarity matrix
 	similarity_matrix = similarity_measure(data)
+	np.save(os.path.join(savepath, "similarity-matrix-%s"%(hdf5_name)), similarity_matrix)
 	print("Similarity Matrix Calculation Done!")
 
 	# Transform similarity matrix to adjacency matrix
@@ -67,7 +68,7 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 			elif community_method == "eigenvector":
 				if lvl > 0:
 					raise ValueError("Non hierarchical method, only one hierarchy is computed")
-				community_list = leading_eigenvector_community(adjacency_matrix, None, False, False, None)
+				community_list = leading_eigenvector_community(adjacency_matrix_binary, None, False, False, None)
 				dendro, inv_dendro = calc_dendro_for_ig(community_list)
 
 
