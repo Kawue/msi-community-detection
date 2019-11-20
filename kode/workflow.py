@@ -15,7 +15,7 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 	winsorize(h5_data, limits=(0, 0.01), axis=0, inplace=True)
 
 	# Convert hdf data in numpy array; desired structure Samples = m/z-images, Features = Pixel
-	data = h5_data.values().transpose()
+	data = h5_data.values.transpose()
 
 	# Calculate similarity matrix
 	similarity_matrix = similarity_measure(data)
@@ -117,7 +117,7 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 def workflow_exec():
 	parser = argparse.ArgumentParser(description="Create an MSI Image Graph and calculate MSI Communities. Also, produce a JSON for GRINE.")
 	parser.add_argument("-d", "--datapath", action="store", dest="datapath", type=str, required=True, help="Path to HDF5 folder or file.")
-	parser.add_argument("-p", "--savepath", action='store', dest='savepath', type=str, required=True, help="Path to save the resulting JSON.")
+	parser.add_argument("-p", "--savepath", action='store', dest='savepath', type=str, required=True, help="Path to save the resulting JSON (including file name with .json ending).")
 	parser.add_argument("-sm", "--similarity", action="store", dest="similarity", type=str, choices=["pearson", "cosine", "euclidean", "euclidean2"], required=True, help="Similarity method to use.")
 	parser.add_argument("-cm", "--community", action='store', dest='community', type=str, choices=["eigenvector", "louvain"], required=True, help="Community detection method to use.")
 	parser.add_argument("-tm", "--transformation", action="store", dest="transformation", type=str, choices=["pca", "statistics"], required=True, help="Transformation method to use.")
@@ -126,7 +126,7 @@ def workflow_exec():
 		
 	similarity_measures_dict = {
 		"pearson": calc_pearson_correlation,
-		"consine": calc_cosine_similarity,
+		"cosine": calc_cosine_similarity,
 		"euclidean": calc_euclidean_distance,
 		"euclidean2": calc_normalized_euclidean_distance
 	}
