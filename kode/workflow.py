@@ -9,6 +9,8 @@ from kode.edge_reduction import *
 from kode.community_detection import *
 from kode.json_factory import *
 from kode.mmm_own import *
+from kode.msi_dimension_reducer import *
+from kode.grine_dimreduce import *
 
 def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, transform_params, savepath, hdf5_name):
 	# Winsorize data
@@ -122,6 +124,7 @@ def workflow_exec():
 	parser.add_argument("-cm", "--community", action='store', dest='community', type=str, choices=["eigenvector", "louvain"], required=True, help="Community detection method to use.")
 	parser.add_argument("-tm", "--transformation", action="store", dest="transformation", type=str, choices=["pca", "statistics"], required=True, help="Transformation method to use.")
 	parser.add_argument("-tp", "--transformationparams", default=None, action="store", dest="transformationparams", type=float, nargs="+", required=False, help="Transformation parameters to use (optional, otherwise default is applied).")
+	parser.add_argument("-dr", "--dimreduce", action="store", dest="dimreduce", type=str, choices=["pca", "nmf", "umap", "tsne", "lsa", "ica", "kpca", "lda", "lle", "mds", "isomap", "spectralembedding"], required=False, help="Method to generate the dimension reduction data set, which is needed for the dimension reduction three component RGB reference image.")
 	args = parser.parse_args()
 		
 	similarity_measures_dict = {
@@ -150,7 +153,27 @@ def workflow_exec():
 	community_method = args.community
 	transform = args.transformation
 	transform_params = args.transformationparams
+
+	dimreduce = args.dimreduce
+
+	method_dict = {
+        "pca": PCA,
+        "nmf": NMF,
+        "lda": LDA,
+        "tsne": TSNE,
+        "umap": UMAP,
+        "ica": ICA,
+        "kpca": KPCA,
+        "lsa": LSA,
+        "lle": LLE,
+        "mds": MDS,
+        "isomap": Isomap,
+        "spectralembedding": SpectralEmbedding
+        }
 	
+
+	if not os.path.isdir(os.path.dirname(args.savepath)):
+		os.makedirs(os.path.dirname(args.savepath))
 
 	json_dict = {"graphs": {}}
 	for ds_idx, h5_file in enumerate(h5_files):
@@ -160,9 +183,9 @@ def workflow_exec():
 		except:
 			dataset_name = fnames[ds_idx]
 		json_dict = build_json(hierarchy_dict, h5_data, dataset_name, nx.from_numpy_array(adjacency_matrix), json_dict, threshold)
-
-	if not os.path.isdir(os.path.dirname(args.savepath)):
-		os.makedirs(os.path.dirname(args.savepath))
+		DR = method_dict[dimreduce](h5_file.values, 3)
+		embedding = DR.perform()
+		grine_dimreduce(h5_file, embedding, dataset_name, dimreduce, os.path.dirname(args.savepath))
 
 	f = open(args.savepath, "w")
 	with f as outputfile:
