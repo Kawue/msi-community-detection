@@ -16,10 +16,195 @@ from sklearn.metrics import mutual_info_score
 from scipy.spatial.distance import correlation, cosine
 
 
+class Graph:
+    def __init__(self, adjacency_matrix, similarity_matrix, node_labels=None, labeltag=None, graphs=None, cluster_labels=None, calc_feature_vectors=True):
+        self.adjacency_matrix = adjacency_matrix
+        self.similarity_matrix = similarity_matrix
+        self.graph = nx.from_numpy_matrix(adjacency_matrix)
+        self.connected_graph = self.force_connected(self.graph, adjacency_matrix, similarity_matrix)
+        self.filled_graph = None
+        self.community_list = None
+        self.node_labels = None
+        if node_labels is not None:
+            if labeltag is None:
+                self.labeltag = "generic"
+            else:
+                self.labeltag = labeltag
+            self.node_labels = node_labels
+            self.label_graph(self.graph, node_labels, labeltag)
+        if graphs is not None:
+            self.force_mastergraph(graphs)            
+        if cluster_labels:
+            if not (isinstance(cluster_labels, list) or isinstance(cluster_labels, dict) or isinstance(cluster_labels, np.ndarray)):
+                raise ValueError("cluster_labels must be of type list, dict or ndarray. For list or ndarray provide: [[identifier, label], ...]. For dict provide {identifier: label, ...}")
+            if isinstance(cluster_labels, dict):
+                cluster_label_tuples = [[i,j] for i,j in cluster_labels.items()]
+                cluster_label_list = [x[1] for x in cluster_label_tuples]
+                self.get_community_list(cluster_label_list)
+                self.cluster_labels = cluster_labels
+            elif isinstance(cluster_labels, list) or isinstance(cluster_labels, np.ndarray):
+                self.get_community_list(cluster_labels)
+                cluster_label_list = [x[1] for x in cluster_labels]
+                self.cluster_labels = {tup[0]: tup[1] for tup in cluster_labels}
+        if calc_feature_vectors:
+            if cluster_labels is None:
+                raise ValueError("cluster_labels must be provided to calculate feature vectors.")
+            self.get_feature_vector(self.graph, cluster_label_list, force_connected=False)
+            self.get_feature_vector(self.connected_graph, cluster_label_list, force_connected=True)
+
+
+    def label_graph(self, graph, node_labels, labeltag):
+        attrs = {}
+        for idx, label in enumerate(node_labels):
+            attrs[idx] = {labeltag: label}
+        nx.set_node_attributes(graph, attrs)
+
+    
+    def force_connected(self, graph, adj_matrix, sim_matrix):
+        while len(list(nx.connected_components(graph))) > 1:
+            components = list([np.array(list(c)) for c in nx.connected_components(graph)])
+            candidate_edges = []
+            for i, c1 in enumerate(components):
+                for j, c2 in enumerate(components[i+1:], start=i+1):
+                    try:
+                        bool_matrix = np.zeros_like(sim_matrix)
+                        bool_matrix[np.ix_(c1,c2)] = 1
+                        bool_matrix[bool_matrix == 0] = -np.inf
+                        candidate_edges.append(np.unravel_index(np.argmax(sim_matrix * bool_matrix), sim_matrix.shape))
+                    except Exception as e:
+                        print(e)
+                        print(i,j)
+            edge_to_add = candidate_edges[np.argmax([sim_matrix[e[0], e[1]] for e in candidate_edges])]
+            graph.add_edge(edge_to_add[0], edge_to_add[1], weight=sim_matrix[edge_to_add[0], edge_to_add[1]])
+        
+        if len(list(nx.connected_components(graph))) > 1:
+            raise ValueError("Bug in force_connected. Connection unsuccessful!")
+        
+        return graph
+
+
+    def force_mastergraph(self, graphs, labeltag=None, labels=None):
+        if type(graphs) != list:
+            raise ValueError("Type of graphs in force_mastergraph() must be of type list.")
+        
+        if labeltag is None and labels is None:
+            raise ValueError("For labeld graphs a labeltag must be provided. For unlabeld graphs a list of labels must be provided (labeltag is optional).")
+        if labels is not None and labeltag is None:
+            labeltag = "generic"
+        
+        if labels is not None:
+            unique_labels = sorted(list(set([l for lbls in labels for l in lbls])))
+        if labeltag is not None:
+            unique_labels = sorted(list(set([l for g in graphs for l in nx.get_node_attributes(g.graph, labeltag).values()])))
+
+        own_labels = nx.get_node_attributes(self.graph, labeltag)
+        if len(own_labels) == 0:
+            raise ValueError("Graph has no labels that match the given labeltag.")
+
+        matrix = np.array(nx.adjacency_matrix(self.graph).todense())
+
+        for idx, lbl in enumerate(unique_labels):
+            if lbl not in own_labels:
+                arr = np.zeros(matrix.shape[0])
+                matrix = np.insert(matrix, idx, arr, axis=0)
+                arr = np.zeros(matrix.shape[0])
+                matrix = np.insert(matrix, idx, arr, axis=1)
+        
+        G = nx.from_numpy_matrix(matrix)
+        self.label_graph(G, unique_labels, labeltag)
+        self.filled_graph = G
+        return G
+
+
+    def get_community_list(self, memb_tuples):
+        community_list = []
+        for i in range (0, max([x[1] for x in memb_tuples])+1):
+            community_list.append([x[0] for x in memb_tuples if x[1] == i])
+        self.community_list = community_list
+        return community_list
+
+
+    def get_feature_vector(self, g, memberships, force_connected):
+        nr_singletons = nx.algorithms.isolate.number_of_isolates(g)
+        nr_nodes = len(g.nodes)
+        nr_edges = len(g.edges)
+        nr_communities = np.amax(memberships)
+        degree_assortativity_coefficient = nx.algorithms.assortativity.degree_assortativity_coefficient(g) #weight="weight"
+        estrada_index = nx.algorithms.centrality.estrada_index(g)
+        transistivity = nx.algorithms.cluster.transitivity(g)
+        average_clustering_coefficient = nx.algorithms.cluster.average_clustering(g) #weight="weight"
+        average_node_connectivity = nx.algorithms.connectivity.connectivity.average_node_connectivity(g) # Time consuming
+        #local_efficiency = nx.algorithms.efficiency_measures.local_efficiency(g) # <- which for edge reduction
+        global_efficiency = nx.algorithms.efficiency_measures.global_efficiency(g) #  <- which for edge reduction
+        overall_reciprocity = nx.overall_reciprocity(g)
+        s_metric = nx.algorithms.smetric.s_metric(g, normalized=False)
+
+        if force_connected:
+            if len(list(nx.connected_components(g))) > 1:
+                raise ValueError("The provided Graph is not connected. Call force_connected() or provide a connected Grph.")
+            average_shortest_path_length = nx.algorithms.shortest_paths.generic.average_shortest_path_length(g) #weight="weight" # Problems if not connected
+            diameter = nx.algorithms.distance_measures.diameter(g) # Problems if not connected 
+            radius = nx.algorithms.distance_measures.radius(g) # Problems if not connected
+            #sw_sigma = nx.algorithms.smallworld.sigma(g, seed=0, niter=100, nrand=10) # Problems if not connected #(default=100)niter=number of rewiring per edge, (default=10)nrand=number of random graphs # Time consuming
+            #sw_omega= nx.algorithms.smallworld.omega(g, seed=0, niter=100, nrand=10) # Problems if not connected #(default=100)niter=number of rewiring per edge, (default=10)nrand=number of random graphs # Time consuming
+            wiener_index = nx.algorithms.wiener.wiener_index(g) # Problems if not connected #weight="weight"
+            feature_vector = [
+                nr_singletons,
+                nr_nodes,
+                nr_edges,
+                nr_communities,
+                degree_assortativity_coefficient,
+                estrada_index,
+                transistivity,
+                average_clustering_coefficient,
+                average_node_connectivity,
+                #local_efficiency,
+                global_efficiency,
+                overall_reciprocity,
+                s_metric,
+                average_shortest_path_length,
+                diameter,
+                radius,
+                #sw_sigma,
+                #sw_omega,
+                wiener_index
+            ]
+            self.feature_vector_connected = feature_vector
+        else:
+            feature_vector = [
+                nr_singletons,
+                nr_nodes,
+                nr_edges,
+                nr_communities,
+                degree_assortativity_coefficient,
+                estrada_index,
+                transistivity,
+                average_clustering_coefficient,
+                average_node_connectivity,
+                #local_efficiency,
+                global_efficiency,
+                overall_reciprocity,
+                s_metric
+            ]
+            self.feature_vector = feature_vector
+
+        #node_connectivity = nxapprox.connectivity.node_connectivity(g) #useless?
+        #edge_connectivity = nx.algorithms.connectivity.connectivity.edge_connectivity(g) #useless?
+
+        #print(feature_vector)
+        
+        return feature_vector
+        
+    
+    
+
+    
+
+
+
 class GraphComparison:
     def __init__(self):
         pass
-
     
     def get_adjacency_matrix(self, g):
         return nx.linalg.graphmatrix.adjacency_matrix(g).toarray()
@@ -80,107 +265,62 @@ class GraphComparison:
 
 
     # https://www.sciencedirect.com/science/article/pii/S0024379511006021
-    def spectral_distance(self, g1, g2, spectrum=False, variant="adjacency", fill=False):
+    def spectral_distance(self, g1, g2, variant="adjacency", fill=False, t=None):
         if variant not in ["adjacency", "laplacian", "modularity"]:
             raise ValueError("Variant parameter must be 'adjacency', 'laplacian' or 'modularity'.")
 
-        if not spectrum:
-            if variant == "laplacian":
-                g1 = self.get_laplacian_spectrum(g1)
-                g2 = self.get_laplacian_spectrum(g2)
-            elif variant == "modularity":
-                g1 = self.get_modularity_spectrum(g1)
-                g2 = self.get_modularity_spectrum(g2)
-            else:
-                g1 = self.get_adjacency_spectrum(g1)
-                g2 = self.get_adjacency_spectrum(g2)
+        if variant == "laplacian":
+            s1 = self.get_laplacian_spectrum(g1)
+            s2 = self.get_laplacian_spectrum(g2)
+        elif variant == "modularity":
+            s1 = self.get_modularity_spectrum(g1)
+            s2 = self.get_modularity_spectrum(g2)
+        else:
+            s1 = self.get_adjacency_spectrum(g1)
+            s2 = self.get_adjacency_spectrum(g2)
 
         
-        if g1.size > g2.size:
+        if s1.size > s2.size:
+            print()
+            print("G1 Bigger!")
+            print()
             if fill:
-                zeros = [0] * (g1.size - g2.size)
-                g2 = np.concatenate([g2, zeros])
+                zeros = [0] * (s1.size - s2.size)
+                s2 = np.concatenate([s2, zeros])
             else:
-                g1 = g1[:g2.size]
-        elif g1.size < g2.size:
+                s1 = s1[:s2.size]
+        elif s1.size < s2.size:
+            print()
+            print("G2 Bigger!")
+            print()
             if fill:
-                zeros = [0] * (g2.size - g1.size)
-                g1 = np.concatenate([g1, zeros])
+                zeros = [0] * (s2.size - s1.size)
+                s1 = np.concatenate([s1, zeros])
             else:
-                g2 = g2[:g1.size]
+                s2 = s2[:s1.size]
         
-        distance = np.sum(np.abs(g1 - g2))
+        if t is not None:             
+            #https://stackoverflow.com/questions/12122021/python-implementation-of-a-graph-similarity-grading-algorithm
+            def select_k(spectrum, minimum_energy=t):
+                running_total = 0.0
+                total = sum(spectrum)
+                if total == 0.0:
+                    return len(spectrum)
+                for i in range(len(spectrum)):
+                    running_total += spectrum[i]
+                    if running_total / total >= minimum_energy:
+                        return i + 1
+                return len(spectrum)
+
+            k1 = select_k(s1)
+            k2 = select_k(s2)
+            k = min(k1, k2)
+            #distance = sum((laplacian1[:k] - laplacian2[:k])**2)
+            distance = np.sum(np.abs(s1[:k] - s2[:k]))
+        else:
+            distance = np.sum(np.abs(s1 - s2))
 
         return distance
-
-
-    def get_feature_vector(self, g, memberships, force_connected):
-        nr_singletons = nx.algorithms.isolate.number_of_isolates(g)
-        nr_nodes = len(g.nodes)
-        nr_edges = len(g.edges)
-        nr_communities = np.amax(memberships)
-        degree_assortativity_coefficient = nx.algorithms.assortativity.degree_assortativity_coefficient(g) #weight="weight"
-        estrada_index = nx.algorithms.centrality.estrada_index(g)
-        transistivity = nx.algorithms.cluster.transitivity(g)
-        average_clustering_coefficient = nx.algorithms.cluster.average_clustering(g) #weight="weight"
-        average_node_connectivity = nx.algorithms.connectivity.connectivity.average_node_connectivity(g) # Time consuming
-        #local_efficiency = nx.algorithms.efficiency_measures.local_efficiency(g) # <- which for edge reduction
-        global_efficiency = nx.algorithms.efficiency_measures.global_efficiency(g) #  <- which for edge reduction
-        overall_reciprocity = nx.overall_reciprocity(g)
-        s_metric = nx.algorithms.smetric.s_metric(g, normalized=False)
-
-        if force_connected:
-            if len(list(nx.connected_components(g))) > 1:
-                raise ValueError("The provided Graph is not connected. Call force_connected() or provide a connected Grph.")
-            average_shortest_path_length = nx.algorithms.shortest_paths.generic.average_shortest_path_length(g) #weight="weight" # Problems if not connected
-            diameter = nx.algorithms.distance_measures.diameter(g) # Problems if not connected 
-            radius = nx.algorithms.distance_measures.radius(g) # Problems if not connected
-            #sw_sigma = nx.algorithms.smallworld.sigma(g, seed=0, niter=100, nrand=10) # Problems if not connected #(default=100)niter=number of rewiring per edge, (default=10)nrand=number of random graphs # Time consuming
-            #sw_omega= nx.algorithms.smallworld.omega(g, seed=0, niter=100, nrand=10) # Problems if not connected #(default=100)niter=number of rewiring per edge, (default=10)nrand=number of random graphs # Time consuming
-            wiener_index = nx.algorithms.wiener.wiener_index(g) # Problems if not connected #weight="weight"
-            feature_vector = [
-                nr_singletons,
-                nr_nodes,
-                nr_edges,
-                nr_communities,
-                degree_assortativity_coefficient,
-                estrada_index,
-                transistivity,
-                average_clustering_coefficient,
-                average_node_connectivity,
-                #local_efficiency,
-                global_efficiency,
-                overall_reciprocity,
-                s_metric,
-                average_shortest_path_length,
-                diameter,
-                radius,
-                #sw_sigma,
-                #sw_omega,
-                wiener_index
-            ]
-        else:
-            feature_vector = [
-                nr_singletons,
-                nr_nodes,
-                nr_edges,
-                nr_communities,
-                degree_assortativity_coefficient,
-                estrada_index,
-                transistivity,
-                average_clustering_coefficient,
-                average_node_connectivity,
-                #local_efficiency,
-                global_efficiency,
-                overall_reciprocity,
-                s_metric
-            ]
-
-        #node_connectivity = nxapprox.connectivity.node_connectivity(g) #useless?
-        #edge_connectivity = nx.algorithms.connectivity.connectivity.edge_connectivity(g) #useless?
-
-        #print(feature_vector)
-        return feature_vector
 
 
     def feature_distance(self, feature_vec1, feature_vec2, func=stats.pearsonr):
@@ -251,6 +391,51 @@ class GraphComparison:
         return distance
 
 
+
+
+    
+    def minimum_subgraph_distance(self, g1, g2):
+        def get_max_common_subgraph(g1, g2):
+            subgraph = nx.Graph()
+
+
+
+        # minimum common supergraph
+        supergraph = nx.compose(g1, g2)
+        
+
+        check stuff below
+        #https://stackoverflow.com/questions/43108481/maximum-common-subgraph-in-a-directed-graph
+        def getMCS(self, G_source, G_new):
+            matching_graph=nx.Graph()
+
+            for n1,n2,attr in G_new.edges(data=True):
+                if G_source.has_edge(n1,n2) :
+                    matching_graph.add_edge(n1,n2,weight=1)
+
+            graphs = list(nx.connected_component_subgraphs(matching_graph))
+
+            mcs_length = 0
+            mcs_graph = nx.Graph()
+            for i, graph in enumerate(graphs):
+
+                if len(graph.nodes()) > mcs_length:
+                    mcs_length = len(graph.nodes())
+                    mcs_graph = graph
+
+            return mcs_graph
+
+
+    
+    
+
+
+
+
+
+
+
+
 def read_json(graphdict):
     mz_dict = graphdict["mzs"]
     memb_tuples = []
@@ -262,16 +447,8 @@ def read_json(graphdict):
         memb_tuples.append((mz, memb))
     memb_tuples.sort(key=lambda tup: tup[0])
     memb_list = [x[1] for x in memb_tuples]
-
-    return memb_tuples, memb_list
-
-
-def get_community_list(memb_tuples):
-    community_list = []
-    for i in range (0, max([x[1] for x in memb_tuples])+1):
-        community_list.append([x[0] for x in memb_tuples if x[1] == i])
-    return community_list
-
+    mz_list = [float(x) for x in mz_dict.keys()]
+    return mz_list, memb_tuples, memb_list
 
 def calc_clustering(dmatrix, names, savepath, methodname):
     np.save(os.path.join(savepath, "distance-matrix-" + methodname + ".npy"), dmatrix)
@@ -282,94 +459,35 @@ def calc_clustering(dmatrix, names, savepath, methodname):
     dendro = dendrogram(Z, labels=names, orientation="right")
     plt.savefig(os.path.join(savepath, methodname + ".png"), dpi = 200, bbox_inches='tight')
 
-
-def force_connected(g, adj_matrix, sim_matrix):
-    while len(list(nx.connected_components(g))) > 1:
-        components = list([np.array(list(c)) for c in nx.connected_components(g)])
-        candidate_edges = []
-        for i, c1 in enumerate(components):
-            for j, c2 in enumerate(components[i+1:], start=i+1):
-                try:
-                    bool_matrix = np.zeros_like(sim_matrix)
-                    bool_matrix[np.ix_(c1,c2)] = 1
-                    bool_matrix[bool_matrix == 0] = -np.inf
-                    candidate_edges.append(np.unravel_index(np.argmax(sim_matrix * bool_matrix), sim_matrix.shape))
-                except Exception as e:
-                    print(e)
-                    print(i,j)
-                    
-        
-        edge_to_add = candidate_edges[np.argmax([sim_matrix[e[0], e[1]] for e in candidate_edges])]
-        g.add_edge(edge_to_add[0], edge_to_add[1], weight=sim_matrix[edge_to_add[0], edge_to_add[1]])
-
-    if len(list(nx.connected_components(g))) > 1:
-        raise ValueError("Bug in force_connected. Connection unsuccessful!")
-    
-    return g
-
-'''
-        distance_matrix = 1-sim_matrix
-    while len(list(nx.connected_components(g))) > 1:
-        print("asdsd")
-        sub_components = list(map(lambda x: np.array(list(x)), list(nx.connected_components(g))))
-        for idx, node_list in enumerate(sub_components):
-            complement_node_list = [node for i, sub_list in enumerate(sub_components) if i != idx for node in sub_list]
-            local_dist = distance_matrix.copy()
-            local_dist[node_list[:, np.newaxis], complement_node_list] -= 20
-            edge_to_add = np.unravel_index(np.argmin(local_dist), local_dist.shape)
-            g.add_edge(edge_to_add[0], edge_to_add[1], weight=distance_matrix[edge_to_add[0], edge_to_add[1]])
-
-    if len(list(nx.connected_components(g))) > 1:
-        raise ValueError("Bug in force_connected. Connection unsuccessful!")
-    asdasd
-'''
-
+def prepare_graph(dirpath, filename, json_dct):
+    adjacency_matrix = np.load(os.path.join(dirpath, "adjacency-matrix-" + filename + ".npy"))
+    similarity_matrix = np.load(os.path.join(dirpath, "similarity-matrix-" + filename + ".npy"))
+    mz_list, memb_tuples, _ = read_json(json_dct[filename])
+    node_labels = sorted(mz_list)
+    return Graph(adjacency_matrix=adjacency_matrix, similarity_matrix=similarity_matrix, node_labels=node_labels, labeltag="mz", graphs=None, cluster_labels=memb_tuples, calc_feature_vectors=True)
 
 def process(fct, name, g1, g2, f1, f2, kwargs):
-        #template = "{method} between \n -{name1}- and -{name2}- \n -----> {distance} \n -------------------------------------------------------------------- \n"
-        d = fct(g1, g2, **kwargs)
-        #print(template.format(method=name, name1=f1, name2=f2, distance=d))
-        return d
+    #template = "{method} between \n -{name1}- and -{name2}- \n -----> {distance} \n -------------------------------------------------------------------- \n"
+    d = fct(g1, g2, **kwargs)
+    #print(template.format(method=name, name1=f1, name2=f2, distance=d))
+    return d
 
-def prepare(dirpath, f, json_dct, gc):
-    dct = {}
-    adj_matrix = np.load(os.path.join(dirpath, "adjacency-matrix-" + f + ".npy"))
-    sim_matrix = np.load(os.path.join(dirpath, "similarity-matrix-" + f + ".npy"))
-    
-    dct["graph"] = nx.from_numpy_matrix(adj_matrix)
-    dct["connected_graph"] = force_connected(dct["graph"], adj_matrix, sim_matrix)
-    dct["adj_matrix"] = adj_matrix
-    dct["sim_matrix"] = adj_matrix
-    memb_tuples, memb_list = read_json(json_dct[f])
-    dct["memb_tuples"] = memb_tuples
-    dct["memb_list"] = memb_list
-    community_list = get_community_list(memb_tuples)
-    dct["community_list"] = community_list
-
-    dct["feature_vector"] = gc.get_feature_vector(dct["graph"], dct["memb_list"], force_connected=False)
-    dct["feature_vector_connected"] = gc.get_feature_vector(dct["connected_graph"], dct["memb_list"], force_connected=True)
-    return dct
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-d", "--folderpath", type=str, required=True, help="Path to folder.")
-    parser.add_argument("-f", "--files", type=str, required=True, nargs="+", help="File names.")
+    parser.add_argument("-d", "--dirpath", type=str, required=True, help="Path to folder.")
+    parser.add_argument("-f", "--files", type=str, required=True, nargs="+", help="File names (similarity matrix, adjacency matrix and json graph names should have a shared file name.).")
     parser.add_argument("-a", "--alias", type=str, required=False, nargs="+", default=None, help="File alias names.")
-    parser.add_argument("-j", "--jsons", type=str, required=True, nargs="+", help="File names.")
+    parser.add_argument("-j", "--jsons", type=str, required=True, nargs="+", help="File names of jsons (without file extension).")
     parser.add_argument("-s", "--savepath", type=str, required=True, help="Path to save output.")
     parser.add_argument("-c", "--cpucount", type=int, required=False, default=1, help="Number of CPUs for parallel processing. -1 takes all available CPUs.")
     args = parser.parse_args()
 
     print("")
-    print("")
-    print("#################")
-    print("START!")
-    print("#################")
-    print("")
-    print("")
+    print("Start Graph Generation ..... ", end="")
 
-    dirpath = args.folderpath
+    dirpath = args.dirpath
     filenames = args.files
     if args.alias:
         if len(args.alias) != len(args.files):
@@ -378,6 +496,9 @@ if __name__ == "__main__":
     else:
         filealias = args.files
     savepath = args.savepath
+    if not os.path.exists(savepath):
+        os.makedirs(savepath)
+
     jsons = args.jsons
     nr_cpu = args.cpucount
 
@@ -397,18 +518,31 @@ if __name__ == "__main__":
             for graph, dct in json_file["graphs"].items():
                 json_dct[dct["dataset"]] = dct
 
-
+    # Parallel preparation of graphs
     graphs = {}
-    gc = GraphComparison()
     for f in filenames:
-        dct = pool.apply(prepare, args=(dirpath, f, json_dct, gc))
-        graphs[f] = dct
+        graphs[f] = pool.apply_async(prepare_graph, args=(dirpath, f, json_dct,))
+
+    for key, job in graphs.items():
+        job.wait()
+    
+    for key, job in graphs.items():
+        graphs[key] = job.get()
+
+    print("successfully completed!")
+    print("")
+
+    # Create filled Graphs
+    labeltag = "mz"
+    graphs_list = list(graphs.values())
+    for key, G in graphs.items():
+        _ = G.force_mastergraph(graphs_list, labeltag)
         
 
+    gc = GraphComparison()
+    
     timestamppath = os.path.join(savepath)
     timetemplate = "Time for: {method} --> {time}"
-
-    print("--------------------------------------------------------------------")
 
     spectral_distance_adjacency = np.zeros((len(filenames),len(filenames)))
     spectral_distance_adjacency_fill = np.zeros((len(filenames),len(filenames)))
@@ -426,88 +560,82 @@ if __name__ == "__main__":
     feature_distance_overlap = np.zeros((len(filenames),len(filenames)))
     feature_distance_editdistance = np.zeros((len(filenames),len(filenames)))
 
-    print("")
-    print("")
-    print("#################")
-    print("PREPRO DONE!")
-    print("#################")
-    print("")
-    print("")
     #start = time()
     #end = time()
     #with open(os.path.join(timestamppath, "computationTimes.txt"), "w+") as f:
     #    print(timetemplate.format(method="", time=np.around(end-start, 4)), file=f)
 
+    print("Start Graph Comparison Computation ..... ")
     for i, f1 in enumerate(filenames):
         for j, f2 in enumerate(filenames[i+1:], start=i+1):
-            g1 = graphs[f1]
-            g2 = graphs[f2]
+            G1 = graphs[f1]
+            G2 = graphs[f2]
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Prune", g1["graph"], g2["graph"], f1, f2, {"spectrum":False, "variant":"adjacency", "fill":False})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"adjacency", "fill":False})).get()
             spectral_distance_adjacency[i,j] = d
             spectral_distance_adjacency[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Fill", g1["graph"], g2["graph"], f1, f2, {"spectrum":False, "variant":"adjacency", "fill":True})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"adjacency", "fill":True})).get()
             spectral_distance_adjacency_fill[i,j] = d
             spectral_distance_adjacency_fill[j,i] = d        
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Prune", g1["graph"], g2["graph"], f1, f2, {"spectrum":False, "variant":"laplacian", "fill":False})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"laplacian", "fill":False})).get()
             spectral_distance_laplacian[i,j] = d
             spectral_distance_laplacian[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Fill", g1["graph"], g2["graph"], f1, f2, {"spectrum":False, "variant":"laplacian", "fill":True})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"laplacian", "fill":True})).get()
             spectral_distance_adjacency_fill[i,j] = d
             spectral_distance_laplacian_fill[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Prune", g1["graph"], g2["graph"], f1, f2, {"spectrum":False, "variant":"modularity", "fill":False})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"modularity", "fill":False})).get()
             spectral_distance_mocularity[i,j] = d
             spectral_distance_mocularity[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Fill", g1["graph"], g2["graph"], f1, f2, {"spectrum":False, "variant":"modularity", "fill":True})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"modularity", "fill":True})).get()
             spectral_distance_mocularity[i,j] = d
             spectral_distance_mocularity[j,i] = d
 
         
             
-            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Pearson", g1["feature_vector"], g2["feature_vector"], f1, f2, {"func":correlation})).get()
+            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Pearson", G1.feature_vector, G2.feature_vector, f1, f2, {"func":correlation})).get()
             feature_distance_pearson[i,j] = d
             feature_distance_pearson[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Cosine", g1["feature_vector"], g2["feature_vector"], f1, f2, {"func":cosine})).get()
+            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Cosine", G1.feature_vector, G2.feature_vector, f1, f2, {"func":cosine})).get()
             feature_distance_cosine[i,j] = d
             feature_distance_cosine[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance MI", g1["feature_vector"], g2["feature_vector"], f1, f2, {"func":mutual_info_score})).get()
+            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance MI", G1.feature_vector, G2.feature_vector, f1, f2, {"func":mutual_info_score})).get()
             feature_distance_mutualinfo[i,j] = 1-d
             feature_distance_mutualinfo[j,i] = 1-d
 
-            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Pearson", g1["feature_vector_connected"], g2["feature_vector_connected"], f1, f2, {"func":correlation})).get()
+            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Pearson", G1.feature_vector_connected, G2.feature_vector_connected, f1, f2, {"func":correlation})).get()
             feature_distance_pearson_connected[i,j] = d
             feature_distance_pearson_connected[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Cosine", g1["feature_vector_connected"], g2["feature_vector_connected"], f1, f2, {"func":cosine})).get()
+            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance Cosine", G1.feature_vector_connected, G2.feature_vector_connected, f1, f2, {"func":cosine})).get()
             feature_distance_cosine_connected[i,j] = d
             feature_distance_cosine_connected[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance MI", g1["feature_vector_connected"], g2["feature_vector_connected"], f1, f2, {"func":mutual_info_score})).get()
+            d = pool.apply_async(process, args=(gc.feature_distance, "Feature Vector Distance MI", G1.feature_vector_connected, G2.feature_vector_connected, f1, f2, {"func":mutual_info_score})).get()
             feature_distance_mutualinfo_connected[i,j] = 1-d
             feature_distance_mutualinfo_connected[j,i] = 1-d
             
 
 
-            d = pool.apply_async(process, args=(gc.freq_set_mining, "Frequent Item Set Distance", g1["community_list"], g2["community_list"], f1, f2, {})).get()
+            d = pool.apply_async(process, args=(gc.freq_set_mining, "Frequent Item Set Distance", G1.community_list, G2.community_list, f1, f2, {})).get()
             feature_distance_fisscore[i,j] = d
             feature_distance_fisscore[j,i] = d
 
 
-            d = pool.apply_async(process, args=(gc.print_community_overlaps, "Matrix Overlap Distance", g1["community_list"], g2["community_list"], f1, f2, {})).get()
+            d = pool.apply_async(process, args=(gc.print_community_overlaps, "Matrix Overlap Distance", G1.community_list, G2.community_list, f1, f2, {})).get()
             feature_distance_overlap[i,j] = d
             feature_distance_overlap[j,i] = d
 
             
 
 
-            d = pool.apply_async(process, args=(gc.edit_distance, "Edit Distance", g1["graph"], g2["graph"], f1, f2, {})).get()
+            d = pool.apply_async(process, args=(gc.edit_distance, "Edit Distance",  G1.graph, G2.graph, f1, f2, {})).get()
             feature_distance_editdistance[i,j] = d
             feature_distance_editdistance[j,i] = d
 
@@ -541,3 +669,26 @@ if __name__ == "__main__":
     calc_clustering(feature_distance_overlap, filealias, savepath, "feature-distance-overlap")
     calc_clustering(feature_distance_editdistance, filealias, savepath, "feature-distance-editdistance")
     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
