@@ -114,6 +114,28 @@ def calc_louvain(adj_matrix, level = 0, return_c_graph = False):
 	return community_list, c_level_graph, dendro, inv_dendro
 
 
+def calc_fluidC(adj_matrix, nr_communities_range=(5,40)):
+	nx_G = nx.from_numpy_array(adj_matrix)
+	for nr in range(nr_communities_range[0], nr_communities_range[1]+1):
+		communities = nx.algorithms.community.asyn_fluid.asyn_fluidc(nx_G, nr, seed=0)
+		# search for optimal communities
+
+	number_communities = max(communities, key = lambda x: communities[x]) + 1
+
+	community_list = []
+	for i in range(number_communities):
+		grp_list = []
+		for grp in communities:
+			if communities[grp] == i:
+				grp_list.append(grp)
+		else:
+			if grp_list:
+				community_list.append(grp_list)
+
+	return community_list
+
+
+
 
 # Calculate Modularity Matrix based Method for community detection
 def calc_mmm_communities(h5_data, adjacency_matrix, cluster_boundary):

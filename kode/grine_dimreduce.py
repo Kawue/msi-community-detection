@@ -13,4 +13,4 @@ def grine_dimreduce(dframe, embedding, name, method, savepath):
     dn = [name]*len(list(dframe.index.get_level_values("grid_y")))
     idx = pd.MultiIndex.from_tuples(zip(gx,gy,dn), names=["grid_x","grid_y","dataset"])
     dframe = pd.DataFrame(data, index = idx, columns=["R", "G", "B"])
-    dframe.to_hdf(os.path.join(savepath, "dimreduce_%s_%s"%(name, method)), key="dimreduce_%s_%s"%(name, method), complib="blosc", complevel=9)
+    dframe.to_hdf(os.path.join(savepath, "dimreduce-%s-%s.h5"%(name, method)), key="dimreduce-%s-%s"%(name, method), complib="blosc", complevel=9)

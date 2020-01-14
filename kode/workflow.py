@@ -28,27 +28,47 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 
 	if transform == "pca":
 		if transform_params is None:
-			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [-1, 1], 200)
+			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [-1, 1], 200, False, False)
 		else:
-			if len(transform_params) != 3:
+			if len(transform_params) != 5:
 				raise ValueError("Wrong parameter for Transformation!")
-			lower = transform_params[0]
-			upper = transform_params[1]
-			step = transform_params[2]
-			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step)
+			lower = float(transform_params[0])
+			upper = float(transform_params[1])
+			step = float(transform_params[2])
+			normalize = str2bool(transform_params[3])
+			try:
+				intersect = str2bool(transform_params[4])
+			except:
+				intersect = False
+			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect)
 	if transform == "statistics":
-		center = np.mean(similarity_matrix)
-		dev =  np.std(similarity_matrix)
 		if transform_params is None:
+			center = np.mean(similarity_matrix)
+			dev =  np.std(similarity_matrix)
 			C = 1
 			adjacency_matrix = transform_by_global_statistics(similarity_matrix, center, dev, C)
 			edge_reduction_threshold = center + dev*C
 		else:
-			if len(transform_params) != 1:
+			if len(transform_params) != 3:
 				raise ValueError("Wrong parameter for Transformation!")
-			C = transform_params[0]
+			center_fct = transform_params[0]
+			dev_fct = transform_params[1]
+			if center_fct == "mean":
+				center = np.mean(similarity_matrix)
+			elif center_fct == "median":
+				center = np.median(similarity_matrix)
+
+			if dev_fct == "std":
+				dev =  np.std(similarity_matrix)
+			elif dev_fct == "mad":
+				if center_fct == "mean":
+					dev = np.mean(np.abs(similarity_matrix - center))
+				elif center_fct == "median":
+					dev = np.median(np.abs(similarity_matrix - center))
+			C = float(transform_params[2])
 			adjacency_matrix = transform_by_global_statistics(similarity_matrix, center, dev, C)
 			edge_reduction_threshold = center + dev*C
+			print("Chosen threshold: %f"%(center+dev*C))
 	print("Adjecency Matrix Calculation Done!")
 
 	# Transform weighted adjacency matrix to unweighted
@@ -109,12 +129,22 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 			hierarchy_dict[lvl] = {"communities": communities, "graph": graph, "cgraph": c_graph}
 
 		except Exception as e:
+			print(e)
 			hierarchy_dict["dendro"] = dendro
 			hierarchy_dict["inv_dendro"] = inv_dendro
-			print(e)
 			break
 
 	return h5_data, hierarchy_dict, adjacency_matrix, edge_reduction_threshold
+
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise ValueError('4th Argument expects Boolean.')
+
 
 def workflow_exec():
 	parser = argparse.ArgumentParser(description="Create an MSI Image Graph and calculate MSI Communities. Also, produce a JSON for GRINE.")
@@ -123,7 +153,7 @@ def workflow_exec():
 	parser.add_argument("-sm", "--similarity", action="store", dest="similarity", type=str, choices=["pearson", "cosine", "euclidean", "euclidean2"], required=True, help="Similarity method to use.")
 	parser.add_argument("-cm", "--community", action='store', dest='community', type=str, choices=["eigenvector", "louvain"], required=True, help="Community detection method to use.")
 	parser.add_argument("-tm", "--transformation", action="store", dest="transformation", type=str, choices=["pca", "statistics"], required=True, help="Transformation method to use.")
-	parser.add_argument("-tp", "--transformationparams", default=None, action="store", dest="transformationparams", type=float, nargs="+", required=False, help="Transformation parameters to use (optional, otherwise default is applied).")
+	parser.add_argument("-tp", "--transformationparams", default=None, action="store", dest="transformationparams", type=str, nargs="+", required=False, help="Transformation parameters to use (optional, otherwise default is applied). For PCA: start_value, end_value, stepnumber, normalize(bool), intersect-method(bool). For Statistics: mean function (mean or median), deviation function (std or mad), deviation multiplier constant C.")
 	parser.add_argument("-dr", "--dimreduce", action="store", dest="dimreduce", type=str, choices=["pca", "nmf", "umap", "tsne", "lsa", "ica", "kpca", "lda", "lle", "mds", "isomap", "spectralembedding"], required=False, help="Method to generate the dimension reduction data set, which is needed for the dimension reduction three component RGB reference image.")
 	args = parser.parse_args()
 		
@@ -138,14 +168,17 @@ def workflow_exec():
 	h5_files = []
 	fnames = []
 	if os.path.isfile(args.datapath):
-		fnames.append(os.path.basename(args.datapath).split(".")[0])
-		h5_files.append(pd.read_hdf(args.datapath))
+		dframe = pd.read_hdf(args.datapath)
+		h5_files.append(dframe)
+		fnames.append(dframe.index.get_level_values("dataset")[0])
 	elif os.path.isdir(args.datapath):
 		for r, ds, fs in os.walk(args.datapath):
 			for f in fs:
 				if ".h5" in f:
-					fnames.append(os.path.basename(f).split(".")[0])
-					h5_files.append(pd.read_hdf(os.path.join(r,f)))
+					dframe = pd.read_hdf(os.path.join(r,f))
+					h5_files.append(dframe)
+					fnames.append(dframe.index.get_level_values("dataset")[0])
+					
 	else:
 		raise ValueError("Given datapath is no file or dir!")
 

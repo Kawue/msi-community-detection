@@ -8,7 +8,7 @@ from kode.pca import pca
 from math import acos, ceil, sqrt
 import skimage.filters as skif
 
-def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber):
+def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normalization, intersect):
 	pool = Pool(processes=cpu_count())
 	threshold_list = np.linspace(similarity_intervall[0], similarity_intervall[1], stepnumber)
 
@@ -29,8 +29,11 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber):
 	nb_edges_values = normalize(nb_edges_result.get())
 
 	# Use the total number of edges as baseline
-	acc_diff_edges = [x - y for x, y in zip(acc_values, nb_edges_values)]
-	eff_diff_edges = [x - y for x, y in zip(eff_values, nb_edges_values)]
+	acc_diff_edges = np.array([x - y for x, y in zip(acc_values, nb_edges_values)])
+	eff_diff_edges = np.array([x - y for x, y in zip(eff_values, nb_edges_values)])
+	if normalization:
+		acc_diff_edges = (acc_diff_edges - np.amin(acc_diff_edges)) / (np.amax(acc_diff_edges) - np.amin(acc_diff_edges))
+		eff_diff_edges = (eff_diff_edges - np.amin(eff_diff_edges)) / (np.amax(eff_diff_edges) - np.amin(eff_diff_edges))
 	# Build a matrix with baselined ACC and Global Efficiency. Samples = ACC & Eff, Features = Threshold
 	matrix = np.array([acc_diff_edges, eff_diff_edges])
 	# Samples = Threshold, Features = ACC & Eff
@@ -41,6 +44,8 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber):
 
 	# Extract the first PCA Component, i.e. data projection on the first pca axis (eigenvector)
 	first_pca_component = matrix_transformed[:, 0]
+	second_pca_component = matrix_transformed[:, 1]
+	mean_pca_component = matrix_transformed.mean(axis=1)
 
 	# Plotting stuff
 	plt.figure()
@@ -50,7 +55,9 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber):
 	plt.xticks(size=15)
 	plt.yticks(size=15)
 	threshold_list = threshold_list[:]
-	plt.plot(threshold_list, first_pca_component, "-d", color="red", label="$\mathbf{y}$")
+	plt.plot(threshold_list, first_pca_component, "-X", color="red", label="$\mathbf{y1}$")
+	plt.plot(threshold_list, second_pca_component, "-d", color="hotpink", label="$\mathbf{y0}$")
+	plt.plot(threshold_list, mean_pca_component, "-d", color="deeppink", label="$\mathbf{ym}$")
 	plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$\mathbf{\nu}^{N_E}$")
 	plt.plot(threshold_list, acc_values[:], "-s", color="blue", label=r"$\mathbf{\nu}^\zeta$")
 	plt.plot(threshold_list, eff_values[:], "-D", color="peru", label=r"$\mathbf{\nu}^\xi$")
@@ -60,11 +67,39 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber):
 	plt.show()
 
 
-	max_value = np.amax(first_pca_component)
-	max_idx = np.argmax(first_pca_component)
-	t = threshold_list[max_idx]
-	print("Maximum Value of First PCA Component: " + str(max_value))
-	print("Index of Maximum of First PCA Component: " + str(max_idx))
+	if intersect:
+		idx = np.where(np.diff(np.sign(acc_diff_edges-eff_diff_edges)))[0][-1]
+		t = threshold_list[idx]
+		print("Intersection method used.")
+	else:
+		'''
+		max_value = np.amax(first_pca_component)
+		max_idx = np.argmax(first_pca_component)
+		t = threshold_list[max_idx]
+		if t > 0.9:
+			print("Second PCA Component is selected!")
+			max_value = np.amax(second_pca_component)
+			max_idx = np.argmax(second_pca_component)
+			t = threshold_list[max_idx]
+		print("Maximum Value of First PCA Component: " + str(max_value))
+		print("Index of Maximum of First PCA Component: " + str(max_idx))
+		'''
+		if first_pca_component[0] > 0 and first_pca_component[-1] > 0:
+			print()
+			print("Second PCA Component is selected!")
+			print()
+			max_value = np.amax(second_pca_component)
+			max_idx = np.argmax(second_pca_component)
+			t = threshold_list[max_idx]
+		else:
+			print()
+			print("First PCA Component is selected!")
+			print()
+			max_value = np.amax(first_pca_component)
+			max_idx = np.argmax(first_pca_component)
+			t = threshold_list[max_idx]
+		print("Maximum Value of First PCA Component: " + str(max_value))
+		print("Index of Maximum of First PCA Component: " + str(max_idx))
 	print("Selected Threshold by PCA: " + str(t))
 
 	return transform_by_global_statistics(similarity_matrix, t, 0, 0), t
