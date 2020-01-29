@@ -7,12 +7,12 @@ Start Docker, navigate into the msi-community-detection directory and call:
 
 ### Usage
 To start the script call:
-`docker run --rm grine/msicommunitydetection`
+`docker run -v path-to-data:/data --rm grine/msicommunitydetection`
 For information about the required command line parameter use `-h`.
 The resulting data files can be can be used within GRINE.
 
 The script needs the MSI data to be in HDF5 format.
-In case of raw data we refer to our preprocessing pipeline [A Mad Pie](https://github.com/Kawue/amadpie/).
+In case of raw data we refer to our preprocessing pipeline [ProViM](https://github.com/Kawue/provim).
 In case of processed data we refer to our parser [imzML-to-HDF5-Parser](https://github.com/Kawue/imzML-to-HDF5).
 
 ## Local Version (without Docker)
