@@ -7,9 +7,11 @@ from itertools import permutations
 from kode.pca import pca
 from math import acos, ceil, sqrt
 import skimage.filters as skif
+from kode.community_detection import *
+from kode.mmm_own import *
 
 def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normalization, intersect):
-	pool = Pool(processes=cpu_count())
+	pool = Pool(processes=1)
 	threshold_list = np.linspace(similarity_intervall[0], similarity_intervall[1], stepnumber)
 
 	# Calculate Average Clustering Coefficient
@@ -48,6 +50,7 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normal
 	mean_pca_component = matrix_transformed.mean(axis=1)
 
 	# Plotting stuff
+	
 	plt.figure()
 	plt.title("Network Measures", fontsize=20, y=1.01)
 	plt.xlabel("Candidate Thresholds ($\mathbf{t}$)", fontsize=20, labelpad=15)
@@ -55,8 +58,8 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normal
 	plt.xticks(size=15)
 	plt.yticks(size=15)
 	threshold_list = threshold_list[:]
-	plt.plot(threshold_list, first_pca_component, "-X", color="red", label="$\mathbf{y1}$")
-	plt.plot(threshold_list, second_pca_component, "-d", color="hotpink", label="$\mathbf{y0}$")
+	plt.plot(threshold_list, first_pca_component, "-X", color="red", label="$\mathbf{y0}$")
+	plt.plot(threshold_list, second_pca_component, "-X", color="hotpink", label="$\mathbf{y1}$")
 	plt.plot(threshold_list, mean_pca_component, "-d", color="deeppink", label="$\mathbf{ym}$")
 	plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$\mathbf{\nu}^{N_E}$")
 	plt.plot(threshold_list, acc_values[:], "-s", color="blue", label=r"$\mathbf{\nu}^\zeta$")
@@ -65,6 +68,7 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normal
 	plt.plot(threshold_list, eff_diff_edges[:], "-o", color="brown", label=r"$\mathbf{\eta}^\xi$")
 	plt.legend(fontsize=15)
 	plt.show()
+	
 
 
 	if intersect:
@@ -203,3 +207,75 @@ def statistic(value_lists, statistic, normalize):
 def min_max_based_interval(similarity_matrix):
 	upper_triangle = similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]
 	return [np.amin(upper_triangle), np.amax(upper_triangle)]
+
+
+#communities : list or iterable of set of nodes
+def modularity_optimization(similarity_matrix, transform, community_method, lower, upper, step, weight="weight"):
+	threshold_list = np.linspace(lower, upper, step)
+
+
+
+	pool = Pool(processes=cpu_count())
+	acc_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, calc_acc, (), False,))
+	eff_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, calc_global_eff, (), False,))
+	nb_edges_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, count_total_nb_edges, (), False,))
+	acc_result.wait()
+	eff_result.wait()
+	nb_edges_result.wait()
+	acc_values = normalize(acc_result.get())
+	eff_values = normalize(eff_result.get())
+	nb_edges_values = normalize(nb_edges_result.get())
+	acc_diff_edges = np.array([x - y for x, y in zip(acc_values, nb_edges_values)])
+	eff_diff_edges = np.array([x - y for x, y in zip(eff_values, nb_edges_values)])
+	matrix = np.array([acc_diff_edges, eff_diff_edges])
+	matrix = matrix.T
+	matrix_transformed = pca(matrix.copy(), False, 2)
+	first_pca_component = matrix_transformed[:, 0]
+	second_pca_component = matrix_transformed[:, 1]
+
+	
+
+	modularity_list = []
+	for t in threshold_list:
+		thresholded_matrix = transform_by_global_statistics(similarity_matrix, t, 0, 0)
+		if transform == "modularity_weighted":
+			modularity_G = nx.Graph(thresholded_matrix.astype(float))
+		elif transform == "modularity_unweighted":
+			modularity_G = nx.Graph(thresholded_matrix.astype(bool).astype(float))
+		else:
+			raise ValueError("Wrong transform method.")
+		if community_method == "louvain":
+			lvl = -1
+			while True:
+				try:
+					lvl += 1
+					community_list, _, _, _ = calc_louvain(thresholded_matrix.astype(bool).astype(float), level=lvl, return_c_graph=True)
+				except:
+					break
+		elif community_method == "eigenvector":
+			community_list = leading_eigenvector_community(thresholded_matrix.astype(bool).astype(float), None, False, False, None)
+		modularity = nx.algorithms.community.modularity(modularity_G, community_list, weight=weight)
+		modularity_list.append(modularity)
+	plt.figure()
+	plt.title("Modularity", fontsize=20, y=1.01)
+	plt.xlabel("Candidate Thresholds ($\mathbf{t}$)", fontsize=20, labelpad=15)
+	plt.ylabel("Modularity", fontsize=20, labelpad=15)
+	plt.xticks(size=15)
+	plt.yticks(size=15)
+	plt.plot(threshold_list, normalize(modularity_list), "-X", color="green", label="$\mathcal{M}$")
+	plt.plot(threshold_list, first_pca_component, "-X", color="red", label="$\mathbf{y0}$")
+	plt.plot(threshold_list, second_pca_component, "-X", color="hotpink", label="$\mathbf{y1}$")
+	plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$\mathbf{\nu}^{N_E}$")
+	plt.plot(threshold_list, acc_values[:], "-s", color="blue", label=r"$\mathbf{\nu}^\zeta$")
+	plt.plot(threshold_list, eff_values[:], "-D", color="peru", label=r"$\mathbf{\nu}^\xi$")
+	plt.plot(threshold_list, acc_diff_edges[:], "-p", color="darkviolet", label=r"$\mathbf{\eta}^\zeta$")
+	plt.plot(threshold_list, eff_diff_edges[:], "-o", color="brown", label=r"$\mathbf{\eta}^\xi$")
+	plt.legend(fontsize=15)
+	plt.show()
+	max_value = np.amax(modularity_list)
+	max_idx = np.argmax(modularity_list)
+	t = threshold_list[max_idx]
+	print("Maximum Modularity: " + str(max_value))
+	print("Index of Maximum Modularity: " + str(max_idx))
+	print("Selected Threshold by Modularity: " + str(t))
+	return transform_by_global_statistics(similarity_matrix, t, 0, 0), t

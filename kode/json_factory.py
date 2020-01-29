@@ -3,7 +3,7 @@ import igraph as ig
 import numpy as np
 import os
 import community as louvain
-##### !!!!! This json uses a modified version of community_louvain.json, which includes a edge attribute named 'count' to calculate the mean edge weight of community graphs !!!!! #####
+##### !!!!! This json uses a modified version of community_louvain.py, which includes a edge attribute named 'count' to calculate the mean edge weight of community graphs !!!!! #####
 def build_json(hierarchy_dict, h5_data, dataset_name, graph, json, threshold):
 	# data set dict
 	ds_dict = {}

@@ -10,7 +10,7 @@ import os
 import json
 from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 import matplotlib.pyplot as plt
-from time import time
+import time
 import multiprocessing as mp
 from sklearn.metrics import mutual_info_score
 from scipy.spatial.distance import correlation, cosine
@@ -61,7 +61,19 @@ class Graph:
 
     
     def force_connected(self, graph, adj_matrix, sim_matrix):
+        if np.isnan(sim_matrix).any():
+            print(np.where(np.isnan(sim_matrix)))
+            print()
+        non_zero_weight_constant = 0.0000000001
+        sim_matrix += non_zero_weight_constant
+        #print(np.amin(sim_matrix))
+        #print("------------")
+        if (sim_matrix < 0).any():
+            sim_matrix += (np.abs(np.amin(sim_matrix)) + non_zero_weight_constant)
+        #print(np.amin(sim_matrix))
+        #print("#################")
         while len(list(nx.connected_components(graph))) > 1:
+            #print(nx.algorithms.isolate.number_of_isolates(graph))
             components = list([np.array(list(c)) for c in nx.connected_components(graph)])
             candidate_edges = []
             for i, c1 in enumerate(components):
@@ -71,15 +83,21 @@ class Graph:
                         bool_matrix[np.ix_(c1,c2)] = 1
                         bool_matrix[bool_matrix == 0] = -np.inf
                         candidate_edges.append(np.unravel_index(np.argmax(sim_matrix * bool_matrix), sim_matrix.shape))
+                        #print(np.isnan(sim_matrix).any())
+                        #print(np.isnan(bool_matrix).any())
+                        #print(np.isnan(sim_matrix*bool_matrix).any())
+                        #print("-------------------------------------")
                     except Exception as e:
                         print(e)
                         print(i,j)
             edge_to_add = candidate_edges[np.argmax([sim_matrix[e[0], e[1]] for e in candidate_edges])]
+            #print(edge_to_add)
+            #sim_matrix[edge_to_add[0], edge_to_add[1]] += non_zero_weight_constant
             graph.add_edge(edge_to_add[0], edge_to_add[1], weight=sim_matrix[edge_to_add[0], edge_to_add[1]])
+            #print(sim_matrix[edge_to_add[0], edge_to_add[1]])
         
         if len(list(nx.connected_components(graph))) > 1:
             raise ValueError("Bug in force_connected. Connection unsuccessful!")
-        
         return graph
 
 
@@ -133,17 +151,16 @@ class Graph:
         estrada_index = nx.algorithms.centrality.estrada_index(g)
         transistivity = nx.algorithms.cluster.transitivity(g)
         average_clustering_coefficient = nx.algorithms.cluster.average_clustering(g) #weight="weight"
-        average_node_connectivity = nx.algorithms.connectivity.connectivity.average_node_connectivity(g) # Time consuming
+        #average_node_connectivity = nx.algorithms.connectivity.connectivity.average_node_connectivity(g) # Time consuming
         #local_efficiency = nx.algorithms.efficiency_measures.local_efficiency(g) # <- which for edge reduction
         global_efficiency = nx.algorithms.efficiency_measures.global_efficiency(g) #  <- which for edge reduction
         overall_reciprocity = nx.overall_reciprocity(g)
         s_metric = nx.algorithms.smetric.s_metric(g, normalized=False)
-
         if force_connected:
             if len(list(nx.connected_components(g))) > 1:
                 raise ValueError("The provided Graph is not connected. Call force_connected() or provide a connected Grph.")
             average_shortest_path_length = nx.algorithms.shortest_paths.generic.average_shortest_path_length(g) #weight="weight" # Problems if not connected
-            diameter = nx.algorithms.distance_measures.diameter(g) # Problems if not connected 
+            diameter = nx.algorithms.distance_measures.diameter(g) # Problems if not connected
             radius = nx.algorithms.distance_measures.radius(g) # Problems if not connected
             #sw_sigma = nx.algorithms.smallworld.sigma(g, seed=0, niter=100, nrand=10) # Problems if not connected #(default=100)niter=number of rewiring per edge, (default=10)nrand=number of random graphs # Time consuming
             #sw_omega= nx.algorithms.smallworld.omega(g, seed=0, niter=100, nrand=10) # Problems if not connected #(default=100)niter=number of rewiring per edge, (default=10)nrand=number of random graphs # Time consuming
@@ -157,7 +174,7 @@ class Graph:
                 estrada_index,
                 transistivity,
                 average_clustering_coefficient,
-                average_node_connectivity,
+                #average_node_connectivity,
                 #local_efficiency,
                 global_efficiency,
                 overall_reciprocity,
@@ -180,18 +197,15 @@ class Graph:
                 estrada_index,
                 transistivity,
                 average_clustering_coefficient,
-                average_node_connectivity,
+                #average_node_connectivity,
                 #local_efficiency,
                 global_efficiency,
                 overall_reciprocity,
                 s_metric
             ]
             self.feature_vector = feature_vector
-
         #node_connectivity = nxapprox.connectivity.node_connectivity(g) #useless?
         #edge_connectivity = nx.algorithms.connectivity.connectivity.edge_connectivity(g) #useless?
-
-        #print(feature_vector)
         
         return feature_vector
         
@@ -281,18 +295,12 @@ class GraphComparison:
 
         
         if s1.size > s2.size:
-            print()
-            print("G1 Bigger!")
-            print()
             if fill:
                 zeros = [0] * (s1.size - s2.size)
                 s2 = np.concatenate([s2, zeros])
             else:
                 s1 = s1[:s2.size]
         elif s1.size < s2.size:
-            print()
-            print("G2 Bigger!")
-            print()
             if fill:
                 zeros = [0] * (s2.size - s1.size)
                 s1 = np.concatenate([s1, zeros])
@@ -392,39 +400,36 @@ class GraphComparison:
 
 
 
-
+    def get_max_common_labeled_subgraph(self, g1, g2):
+        match_graph = nx.Graph()
+        for n1,n2,attr in g2.edges(data=True):
+            if g1.has_edge(n1,n2):
+                #weight = 0.5 * (g1[n1][n2] + g2[n1][n2])
+                weight = 1
+                match_graph.add_edge(n1,n2,weight=weight)
+                
+        components = [match_graph.subgraph(c).copy() for c in nx.connected_components(match_graph)]
+        subgraph_length = 0
+        subgraph_graph = nx.Graph()
+        for i, component in enumerate(components):
+            if len(component.nodes()) > subgraph_length:
+                subgraph_length = len(component.nodes())
+                subgraph_graph = component
+        return subgraph_graph
     
-    def minimum_subgraph_distance(self, g1, g2):
-        def get_max_common_subgraph(g1, g2):
-            subgraph = nx.Graph()
-
-
-
+    def maximum_subgraph_distance(self, g1, g2):
+        #https://stackoverflow.com/questions/43108481/maximum-common-subgraph-in-a-directed-graph
+        subgraph = self.get_max_common_labeled_subgraph(g1, g2)
         # minimum common supergraph
         supergraph = nx.compose(g1, g2)
+        node_score = len(subgraph.nodes()) / len(supergraph.nodes())
+        edge_score = len(subgraph.edges()) / len(supergraph.edges())
+        mean_score = 0.5 * (node_score + edge_score)
+        return 1-node_score, 1-edge_score, 1-mean_score
+
         
-
-        check stuff below
-        #https://stackoverflow.com/questions/43108481/maximum-common-subgraph-in-a-directed-graph
-        def getMCS(self, G_source, G_new):
-            matching_graph=nx.Graph()
-
-            for n1,n2,attr in G_new.edges(data=True):
-                if G_source.has_edge(n1,n2) :
-                    matching_graph.add_edge(n1,n2,weight=1)
-
-            graphs = list(nx.connected_component_subgraphs(matching_graph))
-
-            mcs_length = 0
-            mcs_graph = nx.Graph()
-            for i, graph in enumerate(graphs):
-
-                if len(graph.nodes()) > mcs_length:
-                    mcs_length = len(graph.nodes())
-                    mcs_graph = graph
-
-            return mcs_graph
-
+        
+  
 
     
     
@@ -486,7 +491,7 @@ if __name__ == "__main__":
 
     print("")
     print("Start Graph Generation ..... ", end="")
-
+    
     dirpath = args.dirpath
     filenames = args.files
     if args.alias:
@@ -521,6 +526,7 @@ if __name__ == "__main__":
     # Parallel preparation of graphs
     graphs = {}
     for f in filenames:
+        print(f)
         graphs[f] = pool.apply_async(prepare_graph, args=(dirpath, f, json_dct,))
 
     for key, job in graphs.items():
@@ -545,10 +551,13 @@ if __name__ == "__main__":
     timetemplate = "Time for: {method} --> {time}"
 
     spectral_distance_adjacency = np.zeros((len(filenames),len(filenames)))
+    spectral_distance_adjacency_90p = np.zeros((len(filenames),len(filenames)))
     spectral_distance_adjacency_fill = np.zeros((len(filenames),len(filenames)))
     spectral_distance_laplacian = np.zeros((len(filenames),len(filenames)))
+    spectral_distance_laplacian_90p = np.zeros((len(filenames),len(filenames)))
     spectral_distance_laplacian_fill = np.zeros((len(filenames),len(filenames)))
-    spectral_distance_mocularity = np.zeros((len(filenames),len(filenames)))
+    spectral_distance_modularity = np.zeros((len(filenames),len(filenames)))
+    spectral_distance_modularity_90p = np.zeros((len(filenames),len(filenames)))
     spectral_distance_modularity_fill = np.zeros((len(filenames),len(filenames)))
     feature_distance_pearson = np.zeros((len(filenames),len(filenames)))
     feature_distance_cosine = np.zeros((len(filenames),len(filenames)))
@@ -558,7 +567,9 @@ if __name__ == "__main__":
     feature_distance_mutualinfo_connected = np.zeros((len(filenames),len(filenames)))
     feature_distance_fisscore = np.zeros((len(filenames),len(filenames)))
     feature_distance_overlap = np.zeros((len(filenames),len(filenames)))
+    maximum_subgraph_distance = np.zeros((len(filenames),len(filenames)))
     feature_distance_editdistance = np.zeros((len(filenames),len(filenames)))
+    
 
     #start = time()
     #end = time()
@@ -571,29 +582,41 @@ if __name__ == "__main__":
             G1 = graphs[f1]
             G2 = graphs[f2]
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"adjacency", "fill":False})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"adjacency", "fill":False, "t":None})).get()
             spectral_distance_adjacency[i,j] = d
             spectral_distance_adjacency[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"adjacency", "fill":True})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance t90", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"adjacency", "fill":False, "t":0.9})).get()
+            spectral_distance_adjacency_90p[i,j] = d
+            spectral_distance_adjacency_90p[j,i] = d
+
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Adjacency Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"adjacency", "fill":True, "t":None})).get()
             spectral_distance_adjacency_fill[i,j] = d
             spectral_distance_adjacency_fill[j,i] = d        
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"laplacian", "fill":False})).get()
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"laplacian", "fill":False, "t":None})).get()
             spectral_distance_laplacian[i,j] = d
             spectral_distance_laplacian[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"laplacian", "fill":True})).get()
-            spectral_distance_adjacency_fill[i,j] = d
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance t90", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"adjacency", "fill":False, "t":0.9})).get()
+            spectral_distance_laplacian_90p[i,j] = d
+            spectral_distance_laplacian_90p[j,i] = d
+
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Laplacian Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"laplacian", "fill":True, "t":None})).get()
+            spectral_distance_laplacian_fill[i,j] = d
             spectral_distance_laplacian_fill[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"modularity", "fill":False})).get()
-            spectral_distance_mocularity[i,j] = d
-            spectral_distance_mocularity[j,i] = d
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Prune", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"modularity", "fill":False, "t":None})).get()
+            spectral_distance_modularity[i,j] = d
+            spectral_distance_modularity[j,i] = d
 
-            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"spectrum":False, "variant":"modularity", "fill":True})).get()
-            spectral_distance_mocularity[i,j] = d
-            spectral_distance_mocularity[j,i] = d
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance t90", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"adjacency", "fill":False, "t":0.9})).get()
+            spectral_distance_modularity_90p[i,j] = d
+            spectral_distance_modularity_90p[j,i] = d
+
+            d = pool.apply_async(process, args=(gc.spectral_distance, "Spectral Modularity Distance Fill", G1.filled_graph, G2.filled_graph, f1, f2, {"variant":"modularity", "fill":True, "t":None})).get()
+            spectral_distance_modularity_fill[i,j] = d
+            spectral_distance_modularity_fill[j,i] = d
 
         
             
@@ -632,12 +655,15 @@ if __name__ == "__main__":
             feature_distance_overlap[i,j] = d
             feature_distance_overlap[j,i] = d
 
+            nd,ed,d = pool.apply_async(process, args=(gc.maximum_subgraph_distance, "Subgraph Distance", G1.graph, G2.graph, f1, f2, {})).get()
+            maximum_subgraph_distance[i,j] = d
+            maximum_subgraph_distance[j,i] = d
             
 
 
-            d = pool.apply_async(process, args=(gc.edit_distance, "Edit Distance",  G1.graph, G2.graph, f1, f2, {})).get()
-            feature_distance_editdistance[i,j] = d
-            feature_distance_editdistance[j,i] = d
+            #d = pool.apply_async(process, args=(gc.edit_distance, "Edit Distance",  G1.graph, G2.graph, f1, f2, {})).get()
+            #feature_distance_editdistance[i,j] = d
+            #feature_distance_editdistance[j,i] = d
 
 
             print("")
@@ -653,11 +679,56 @@ if __name__ == "__main__":
     pool.close()
     pool.join()
 
+    
+    print(spectral_distance_adjacency)
+    print()
+    print(spectral_distance_adjacency_90p)
+    print()
+    print(spectral_distance_adjacency_fill)
+    print()
+    print(spectral_distance_laplacian)
+    print()
+    print(spectral_distance_laplacian_90p)
+    print()
+    print(spectral_distance_laplacian_fill)
+    print()
+    print(spectral_distance_modularity)
+    print()
+    print(spectral_distance_modularity_90p)
+    print()
+    print(spectral_distance_modularity_fill)
+    print()
+    print("-----------------------------")
+    print()
+    print(feature_distance_pearson) #x
+    print()
+    print(feature_distance_cosine) #x
+    print()
+    print(feature_distance_mutualinfo) #x
+    print()
+    print(feature_distance_pearson_connected) #x
+    print()
+    print(feature_distance_cosine_connected) #x
+    print()
+    print(feature_distance_mutualinfo_connected) #x
+    print()
+    print("-----------------------------")
+    print()
+    print(feature_distance_fisscore) #x
+    print()
+    print(feature_distance_overlap)
+    print()
+    print(maximum_subgraph_distance)
+
+
     calc_clustering(spectral_distance_adjacency, filealias, savepath, "spectral-distance-adjacency")
+    calc_clustering(spectral_distance_adjacency_90p, filealias, savepath, "spectral-distance-adjacency-90p")
     calc_clustering(spectral_distance_adjacency_fill, filealias, savepath, "spectral-distance-adjacency-fill")
     calc_clustering(spectral_distance_laplacian, filealias, savepath, "spectral-distance-laplacian")
+    calc_clustering(spectral_distance_laplacian_90p, filealias, savepath, "spectral-distance-laplacian-90p")
     calc_clustering(spectral_distance_laplacian_fill, filealias, savepath, "spectral-distance-laplacian-fill")
-    calc_clustering(spectral_distance_mocularity, filealias, savepath, "spectral-distance-mocularity")
+    calc_clustering(spectral_distance_modularity, filealias, savepath, "spectral-distance-mocularity")
+    calc_clustering(spectral_distance_modularity_90p, filealias, savepath, "spectral-distance-mocularity-90p")
     calc_clustering(spectral_distance_modularity_fill, filealias, savepath, "spectral-distance-modularity-fill")
     calc_clustering(feature_distance_pearson, filealias, savepath, "feature-distance-pearson")
     calc_clustering(feature_distance_cosine, filealias, savepath, "feature-distance-cosine")
@@ -667,28 +738,5 @@ if __name__ == "__main__":
     calc_clustering(feature_distance_mutualinfo_connected, filealias, savepath, "feature-distance-mutualinfo-connected")
     calc_clustering(feature_distance_fisscore, filealias, savepath, "feature-distance-fisscore")
     calc_clustering(feature_distance_overlap, filealias, savepath, "feature-distance-overlap")
-    calc_clustering(feature_distance_editdistance, filealias, savepath, "feature-distance-editdistance")
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    calc_clustering(maximum_subgraph_distance, filealias, savepath, "maximum-subgraph-distance")
+    #calc_clustering(feature_distance_editdistance, filealias, savepath, "feature-distance-editdistance")

@@ -14,7 +14,7 @@ from kode.grine_dimreduce import *
 
 def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, transform_params, savepath, hdf5_name):
 	# Winsorize data
-	winsorize(h5_data, limits=(0, 0.01), axis=0, inplace=True)
+	#winsorize(h5_data, limits=(0, 0.01), axis=0, inplace=True)
 
 	# Convert hdf data in numpy array; desired structure Samples = m/z-images, Features = Pixel
 	data = h5_data.values.transpose()
@@ -69,6 +69,13 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 			adjacency_matrix = transform_by_global_statistics(similarity_matrix, center, dev, C)
 			edge_reduction_threshold = center + dev*C
 			print("Chosen threshold: %f"%(center+dev*C))
+	if transform == "modularity_weighted" or transform == "modularity_unweighted":
+		lower = float(transform_params[0])
+		upper = float(transform_params[1])
+		step = float(transform_params[2])
+		adjacency_matrix, edge_reduction_threshold = modularity_optimization(similarity_matrix, transform, community_method, lower, upper, step)
+
+
 	print("Adjecency Matrix Calculation Done!")
 
 	# Transform weighted adjacency matrix to unweighted
@@ -146,13 +153,20 @@ def str2bool(v):
         raise ValueError('4th Argument expects Boolean.')
 
 
+def h5_clean_filling(h5_file):
+	cleaned = h5_file.loc[:,(~np.isclose(h5_file, 0)).any(axis=0)]
+	#cleaned = h5_file.loc[:,(h5_file !=0).any(axis=0)]
+	return cleaned
+
+
+
 def workflow_exec():
 	parser = argparse.ArgumentParser(description="Create an MSI Image Graph and calculate MSI Communities. Also, produce a JSON for GRINE.")
 	parser.add_argument("-d", "--datapath", action="store", dest="datapath", type=str, required=True, help="Path to HDF5 folder or file.")
 	parser.add_argument("-p", "--savepath", action='store', dest='savepath', type=str, required=True, help="Path to save the resulting JSON (including file name with .json ending).")
 	parser.add_argument("-sm", "--similarity", action="store", dest="similarity", type=str, choices=["pearson", "cosine", "euclidean", "euclidean2"], required=True, help="Similarity method to use.")
 	parser.add_argument("-cm", "--community", action='store', dest='community', type=str, choices=["eigenvector", "louvain"], required=True, help="Community detection method to use.")
-	parser.add_argument("-tm", "--transformation", action="store", dest="transformation", type=str, choices=["pca", "statistics"], required=True, help="Transformation method to use.")
+	parser.add_argument("-tm", "--transformation", action="store", dest="transformation", type=str, choices=["pca", "statistics", "modularity_weighted", "modularity_unweighted"], required=True, help="Transformation method to use.")
 	parser.add_argument("-tp", "--transformationparams", default=None, action="store", dest="transformationparams", type=str, nargs="+", required=False, help="Transformation parameters to use (optional, otherwise default is applied). For PCA: start_value, end_value, stepnumber, normalize(bool), intersect-method(bool). For Statistics: mean function (mean or median), deviation function (std or mad), deviation multiplier constant C.")
 	parser.add_argument("-dr", "--dimreduce", action="store", dest="dimreduce", type=str, choices=["pca", "nmf", "umap", "tsne", "lsa", "ica", "kpca", "lda", "lle", "mds", "isomap", "spectralembedding"], required=False, help="Method to generate the dimension reduction data set, which is needed for the dimension reduction three component RGB reference image.")
 	args = parser.parse_args()
@@ -207,6 +221,10 @@ def workflow_exec():
 
 	if not os.path.isdir(os.path.dirname(args.savepath)):
 		os.makedirs(os.path.dirname(args.savepath))
+
+
+	h5_files = [h5_clean_filling(h5_file) for h5_file in h5_files]
+
 
 	json_dict = {"graphs": {}}
 	for ds_idx, h5_file in enumerate(h5_files):
