@@ -71,7 +71,7 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normal
 		plt.plot(threshold_list, acc_diff_edges[:] + eff_diff_edges[:], "-P", color="orange", label=r"$\mathbf{\eta}^\mathrm{sum}$")
 		plt.plot(threshold_list, first_pca_component, "-X", color="red", label=r"$\mathbf{\eta}^\mathrm{pca}$")
 		plt.legend(fontsize=15)
-		plt.show()
+		#plt.show()
 		if not os.path.exists(os.path.join(savepath, "community_detection_plots")):
 			os.makedirs(os.path.join(savepath, "community_detection_plots"))
 		plt.savefig(os.path.join(savepath, "community_detection_plots", "edge_reduction_plot.png"),bbox_inches='tight')
