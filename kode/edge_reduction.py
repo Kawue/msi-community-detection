@@ -1,3 +1,4 @@
+import os
 import networkx as nx
 import numpy as np
 from multiprocessing import Pool, cpu_count
@@ -10,25 +11,20 @@ import skimage.filters as skif
 from kode.community_detection import *
 from kode.mmm_own import *
 
-def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normalization, intersect):
-	pool = Pool(processes=1)
+def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normalization, intersect, savepath):
 	threshold_list = np.linspace(similarity_intervall[0], similarity_intervall[1], stepnumber)
-
+	
 	# Calculate Average Clustering Coefficient
-	acc_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, calc_acc, (), False,))
+	acc_result = calc_topology_pca_method(similarity_matrix, threshold_list, calc_acc, (), False)
 	# Calculate Global Efficiency
-	eff_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, calc_global_eff, (), False,))
+	eff_result = calc_topology_pca_method(similarity_matrix, threshold_list, calc_global_eff, (), False)
 	# Calculate total number of edges
-	nb_edges_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, count_total_nb_edges, (), False,))
-
-	acc_result.wait()
-	eff_result.wait()
-	nb_edges_result.wait()
+	nb_edges_result = calc_topology_pca_method(similarity_matrix, threshold_list, count_total_nb_edges, (), False)
 
 	# Normalize every value into [0,1]
-	acc_values = normalize(acc_result.get())
-	eff_values = normalize(eff_result.get())
-	nb_edges_values = normalize(nb_edges_result.get())
+	acc_values = normalize(acc_result)
+	eff_values = normalize(eff_result)
+	nb_edges_values = normalize(nb_edges_result)
 
 	# Use the total number of edges as baseline
 	acc_diff_edges = np.array([x - y for x, y in zip(acc_values, nb_edges_values)])
@@ -50,24 +46,35 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normal
 	mean_pca_component = matrix_transformed.mean(axis=1)
 
 	# Plotting stuff
-	
-	plt.figure()
-	plt.title("Network Measures", fontsize=20, y=1.01)
-	plt.xlabel("Candidate Thresholds ($\mathbf{t}$)", fontsize=20, labelpad=15)
-	plt.ylabel("Measure Values", fontsize=20, labelpad=15)
-	plt.xticks(size=15)
-	plt.yticks(size=15)
-	threshold_list = threshold_list[:]
-	plt.plot(threshold_list, first_pca_component, "-X", color="red", label="$\mathbf{y0}$")
-	plt.plot(threshold_list, second_pca_component, "-X", color="hotpink", label="$\mathbf{y1}$")
-	plt.plot(threshold_list, mean_pca_component, "-d", color="deeppink", label="$\mathbf{ym}$")
-	plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$\mathbf{\nu}^{N_E}$")
-	plt.plot(threshold_list, acc_values[:], "-s", color="blue", label=r"$\mathbf{\nu}^\zeta$")
-	plt.plot(threshold_list, eff_values[:], "-D", color="peru", label=r"$\mathbf{\nu}^\xi$")
-	plt.plot(threshold_list, acc_diff_edges[:], "-p", color="darkviolet", label=r"$\mathbf{\eta}^\zeta$")
-	plt.plot(threshold_list, eff_diff_edges[:], "-o", color="brown", label=r"$\mathbf{\eta}^\xi$")
-	plt.legend(fontsize=15)
-	plt.show()
+	if savepath:
+		plt.figure()
+		#fig = plt.gcf()
+		#fig.set_size_inches(32, 18)
+		#fig.tight_layout()
+		plt.title("QGP Edge Reduction", fontsize=20, y=1.01)
+		plt.xlabel(r"Candidate Thresholds ($\mathbf{\gamma}$)", fontsize=20, labelpad=15)
+		plt.ylabel("Values", fontsize=20, labelpad=15)
+		plt.xticks(size=15)
+		plt.yticks(size=15)
+		vmin = np.amin([first_pca_component, second_pca_component, nb_edges_values, acc_values, eff_values, acc_diff_edges, eff_diff_edges])
+		vmax = np.amax([first_pca_component, second_pca_component, nb_edges_values, acc_values, eff_values, acc_diff_edges, eff_diff_edges])
+		plt.axvline(x=np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]), color="k", linestyle="dashed")
+		plt.axvline(x=np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]), color="k", linestyle="dashed")
+		threshold_list = threshold_list[:]
+		#plt.plot(threshold_list, second_pca_component, "-X", color="hotpink", label=r"$\mathbf{y_1}$")
+		#plt.plot(threshold_list, mean_pca_component, "-d", color="deeppink", label=r"$\mathbf{y}_{mean}$")
+		plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$|E|$")
+		plt.plot(threshold_list, eff_values[:], "-d", color="deeppink", label=r"$\mathbf{\Lambda}}_e$")
+		plt.plot(threshold_list, acc_values[:], "-s", color="steelblue", label=r"$\mathbf{\Lambda}}_c$")
+		plt.plot(threshold_list, eff_diff_edges[:], "-d", color="hotpink", label=r"$\mathbf{\hat{\Lambda}}_e$")
+		plt.plot(threshold_list, acc_diff_edges[:], "-s", color="dodgerblue", label=r"$\mathbf{\hat{\Lambda}}_c$")
+		plt.plot(threshold_list, acc_diff_edges[:] + eff_diff_edges[:], "-P", color="orange", label=r"$\mathbf{\eta}^\mathrm{sum}$")
+		plt.plot(threshold_list, first_pca_component, "-X", color="red", label=r"$\mathbf{\eta}^\mathrm{pca}$")
+		plt.legend(fontsize=15)
+		plt.show()
+		if not os.path.exists(os.path.join(savepath, "community_detection_plots")):
+			os.makedirs(os.path.join(savepath, "community_detection_plots"))
+		plt.savefig(os.path.join(savepath, "community_detection_plots", "edge_reduction_plot.png"),bbox_inches='tight')
 	
 
 
@@ -92,8 +99,10 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normal
 			print()
 			print("Second PCA Component is selected!")
 			print()
-			max_value = np.amax(second_pca_component)
-			max_idx = np.argmax(second_pca_component)
+			#max_value = np.amax(second_pca_component)
+			#max_idx = np.argmax(second_pca_component)
+			max_value = np.amin(first_pca_component)
+			max_idx = np.argmin(first_pca_component)
 			t = threshold_list[max_idx]
 		else:
 			print()
@@ -166,7 +175,7 @@ def calc_eff(G, u, v):
 		return 0
 
 
-# Calculate the Global Efficiency of a network
+# Calculate the average Efficiency of a network
 def calc_global_eff(graph):
 	G = graph
 	n = len(G)

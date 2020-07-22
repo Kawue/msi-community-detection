@@ -74,7 +74,7 @@ def calc_dendro_for_ig(community_list):
 # Level is calculated from behind, i.e. 0 is the highest level, i.e. level-n.
 def calc_louvain(adj_matrix, level = 0, return_c_graph = False):
 	nx_G = nx.from_numpy_array(adj_matrix)
-	dendro = louvain.generate_dendrogram(nx_G, randomize=False) #Maybe set randomize True
+	dendro = louvain.generate_dendrogram(nx_G, randomize=False, random_state=0) #Maybe set randomize True
 	#print(dendro)
 	#asdasd
 

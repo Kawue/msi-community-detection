@@ -13,9 +13,12 @@ def pca(data, whiten_bool, components):
     pca.fit(data)
     np.set_printoptions(suppress=True)
     print("PCA Components Explained Variance Ratio: " + str(np.around(pca.explained_variance_ratio_ * 100, 2)))
-
+    print()
+    print(pca.components_)
     # Calculate loading matrix
+    print()
     loadings_matrix = (pca.components_.T * np.sqrt(pca.explained_variance_)).T
+    print(loadings_matrix)
 
     # Transform data
     data_transformed = pca.transform(data)

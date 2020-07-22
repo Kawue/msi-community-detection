@@ -4,7 +4,8 @@ import numpy as np
 import scipy as sp
 
 def leading_eigenvector_community(adjacency_matrix, number_boundary=None, ker_lin_flag=False, ker_lin_n_partite_flag=False, ew_limit=None):
-
+    #https://networkx.github.io/documentation/stable/reference/algorithms/generated/networkx.algorithms.community.kernighan_lin.kernighan_lin_bisection.html#networkx.algorithms.community.kernighan_lin.kernighan_lin_bisection
+    #https://networkx.github.io/documentation/stable/reference/linalg.html?highlight=modularity#module-networkx.linalg.modularitymatrix
     ##### Check room for optimization by using NetworkX
 
     if ew_limit == None:

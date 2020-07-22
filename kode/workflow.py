@@ -12,6 +12,64 @@ from kode.mmm_own import *
 from kode.msi_dimension_reducer import *
 from kode.grine_dimreduce import *
 
+def workflow_extern(similarity_matrix, transform=None, lower=None, upper=None, step=None, normalize=None, intersect=None, center_fct=None, dev_fct=None, C=None, community_method=None, savepath=None):
+	if not (np.diag(similarity_matrix) == 1).all():
+		raise ValueError("Diagonal of similarity matrix must be one.")
+
+	if transform == "pca":
+		adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect, savepath)
+	if transform == "statistics":
+		upper_triangle = similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]
+		if center_fct == "mean":
+			center = np.mean(upper_triangle)
+		elif center_fct == "median":
+			center = np.median(upper_triangle)
+		if dev_fct == "std":
+			dev =  np.std(upper_triangle)
+		elif dev_fct == "mad":
+			if center_fct == "mean":
+				dev = np.mean(np.abs(upper_triangle - center))
+			elif center_fct == "median":
+				dev = np.median(np.abs(upper_triangle - center))
+		adjacency_matrix = transform_by_global_statistics(similarity_matrix, center, dev, C)
+		edge_reduction_threshold = center + dev*C
+		print("Chosen threshold: %f"%(center+dev*C))
+	if transform == "modularity_weighted" or transform == "modularity_unweighted":
+		adjacency_matrix, edge_reduction_threshold = modularity_optimization(similarity_matrix, transform, community_method, lower, upper, step)
+
+	# Transform weighted adjacency matrix to unweighted
+	adjacency_matrix_binary = adjacency_matrix.astype(bool).astype(float)
+
+	lvl = -1
+	while True:
+		try:
+			lvl += 1
+			# Calculate communities
+			if community_method == "louvain":
+				community_list, _, _, _ = calc_louvain(adjacency_matrix_binary, level=lvl, return_c_graph=True)
+			elif community_method == "eigenvector":
+				if lvl > 0:
+					raise ValueError("Non hierarchical method, only one hierarchy is computed")
+				community_list = leading_eigenvector_community(adjacency_matrix_binary, None, False, False, None)
+
+			# Calculate membership list
+			membership_list = []
+			for vertex in range(len(adjacency_matrix_binary)):
+				for membership_id, community in enumerate(community_list):
+					if vertex in community:
+						membership_list.append(membership_id)
+		except Exception as e:
+			print(e)
+			break
+	
+	return membership_list
+
+
+
+
+
+
+
 def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, transform_params, savepath, hdf5_name):
 	# Winsorize data
 	#winsorize(h5_data, limits=(0, 0.01), axis=0, inplace=True)
@@ -28,23 +86,30 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 
 	if transform == "pca":
 		if transform_params is None:
-			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [-1, 1], 200, False, False)
+			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [-1, 1], 200, False, False, savepath)
 		else:
 			if len(transform_params) != 5:
 				raise ValueError("Wrong parameter for Transformation!")
-			lower = float(transform_params[0])
-			upper = float(transform_params[1])
+			if transform_params[0] == "min":
+				lower = np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])
+			else:
+				lower = float(transform_params[0])
+			if transform_params[1] == "max":
+				upper = np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])
+			else:
+				upper = float(transform_params[1])
 			step = float(transform_params[2])
 			normalize = str2bool(transform_params[3])
 			try:
 				intersect = str2bool(transform_params[4])
 			except:
 				intersect = False
-			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect)
+			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect, savepath)
 	if transform == "statistics":
+		upper_triangle = similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]
 		if transform_params is None:
-			center = np.mean(similarity_matrix)
-			dev =  np.std(similarity_matrix)
+			center = np.mean(upper_triangle)
+			dev =  np.std(upper_triangle)
 			C = 1
 			adjacency_matrix = transform_by_global_statistics(similarity_matrix, center, dev, C)
 			edge_reduction_threshold = center + dev*C
@@ -54,17 +119,17 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 			center_fct = transform_params[0]
 			dev_fct = transform_params[1]
 			if center_fct == "mean":
-				center = np.mean(similarity_matrix)
+				center = np.mean(upper_triangle)
 			elif center_fct == "median":
-				center = np.median(similarity_matrix)
+				center = np.median(upper_triangle)
 
 			if dev_fct == "std":
-				dev =  np.std(similarity_matrix)
+				dev =  np.std(upper_triangle)
 			elif dev_fct == "mad":
 				if center_fct == "mean":
-					dev = np.mean(np.abs(similarity_matrix - center))
+					dev = np.mean(np.abs(upper_triangle - center))
 				elif center_fct == "median":
-					dev = np.median(np.abs(similarity_matrix - center))
+					dev = np.median(np.abs(upper_triangle - center))
 			C = float(transform_params[2])
 			adjacency_matrix = transform_by_global_statistics(similarity_matrix, center, dev, C)
 			edge_reduction_threshold = center + dev*C
@@ -74,7 +139,6 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 		upper = float(transform_params[1])
 		step = float(transform_params[2])
 		adjacency_matrix, edge_reduction_threshold = modularity_optimization(similarity_matrix, transform, community_method, lower, upper, step)
-
 
 	print("Adjecency Matrix Calculation Done!")
 
@@ -93,7 +157,7 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 			lvl += 1
 			# Calculate communities
 			if community_method == "louvain":
-				community_list, _, dendro, inv_dendro = calc_louvain(adjacency_matrix_binary, level=lvl,return_c_graph=True)
+				community_list, _, dendro, inv_dendro = calc_louvain(adjacency_matrix_binary, level=lvl, return_c_graph=True)
 			elif community_method == "eigenvector":
 				if lvl > 0:
 					raise ValueError("Non hierarchical method, only one hierarchy is computed")
