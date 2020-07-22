@@ -86,7 +86,7 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 
 	if transform == "pca":
 		if transform_params is None:
-			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [-1, 1], 200, False, False, savepath)
+			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)]), np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])], 100, False, False, savepath)
 		else:
 			if len(transform_params) != 5:
 				raise ValueError("Wrong parameter for Transformation!")
@@ -135,9 +135,22 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 			edge_reduction_threshold = center + dev*C
 			print("Chosen threshold: %f"%(center+dev*C))
 	if transform == "modularity_weighted" or transform == "modularity_unweighted":
-		lower = float(transform_params[0])
-		upper = float(transform_params[1])
-		step = float(transform_params[2])
+		if transform_params is None:
+			lower = np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])
+			upper = np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])
+			step = 100
+		else:
+			if len(transform_params) != 3:
+				raise ValueError("Wrong parameter for Transformation!")
+			if transform_params[0] == "min":
+				lower = np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])
+			else:
+				lower = float(transform_params[0])
+			if transform_params[1] == "max":
+				upper = np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])
+			else:
+				upper = float(transform_params[1])
+			step = float(transform_params[2])
 		adjacency_matrix, edge_reduction_threshold = modularity_optimization(similarity_matrix, transform, community_method, lower, upper, step)
 
 	print("Adjecency Matrix Calculation Done!")
