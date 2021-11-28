@@ -1,6 +1,9 @@
 # MSI Community Detection (GRINE)
 MSI community detection is part of the [GRINE project](https://github.com/Kawue/grine-v2). The project can be used to detect communities in image networks build from mass spectrometry imaging data. It will produce a .JSON file, which is needed to start GRINE. If you use GRINE or MSI Community Detection for your own work, please reference it as [1].
 
+## Please Note
+If the "louvain method" is used for community detection this project uses a customized version of the `python-louvain` package. To use it install `python-louvain` via pip or conda and replace the installed `community_louvain.py` within `python-folder/Lib/site-packages/community` with the file within this project.
+
 ## Docker Version
 Start Docker, navigate into the msi-community-detection directory and call:
 `docker build -t grine/msicommunitydetection .`
