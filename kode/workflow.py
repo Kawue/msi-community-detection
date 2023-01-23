@@ -12,12 +12,12 @@ from kode.mmm_own import *
 from kode.msi_dimension_reducer import *
 from kode.grine_dimreduce import *
 
-def workflow_extern(similarity_matrix, transform=None, lower=None, upper=None, step=None, normalize=None, intersect=None, center_fct=None, dev_fct=None, C=None, community_method=None, savepath=None):
+def workflow_extern(similarity_matrix, transform=None, lower=None, upper=None, step=None, normalize=None, intersect=None, sum=None, center_fct=None, dev_fct=None, C=None, community_method=None, savepath=None):
 	if not (np.diag(similarity_matrix) == 1).all():
 		raise ValueError("Diagonal of similarity matrix must be one.")
 
 	if transform == "pca":
-		adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect, savepath)
+		adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect, sum, savepath)
 	if transform == "statistics":
 		upper_triangle = similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]
 		if center_fct == "mean":
@@ -78,7 +78,10 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 	data = h5_data.values.transpose()
 
 	# Calculate similarity matrix
-	similarity_matrix = similarity_measure(data)
+	if similarity_measure in [calc_phik, calc_phik_adj, calc_hypergeometric, calc_multifeature, calc_intmagan, calc_local_std_similarity, calc_pearson_adj, calc_cosine_adj, calc_hypergeometric_adj, calc_local_std_similarity_adj, calc_contingency, calc_contingency_adj, calc_mdsi, calc_mdsi_adj, calc_mdsi2, calc_mdsi2_adj, calc_ssim, calc_ssim_adj, calc_sr, calc_sr_adj,]:
+		similarity_matrix = similarity_measure(h5_data)
+	else:
+		similarity_matrix = similarity_measure(data)
 	np.save(os.path.join(savepath, "similarity-matrix-%s"%(hdf5_name)), similarity_matrix)
 	print("Similarity Matrix Calculation Done!")
 
@@ -86,7 +89,7 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 
 	if transform == "pca":
 		if transform_params is None:
-			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)]), np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])], 100, False, False, savepath)
+			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)]), np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix,k=1)])], 100, False, False, False, savepath)
 		else:
 			if len(transform_params) != 5:
 				raise ValueError("Wrong parameter for Transformation!")
@@ -102,9 +105,11 @@ def workflow(h5_data, ds_idx, similarity_measure, community_method, transform, t
 			normalize = str2bool(transform_params[3])
 			try:
 				intersect = str2bool(transform_params[4])
+				intersect = str2bool(transform_params[5])
 			except:
 				intersect = False
-			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect, savepath)
+				sum = False
+			adjacency_matrix, edge_reduction_threshold = transform_by_pca(similarity_matrix, [lower, upper], step, normalize, intersect, sum, savepath)
 	if transform == "statistics":
 		upper_triangle = similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]
 		if transform_params is None:
@@ -241,10 +246,10 @@ def workflow_exec():
 	parser = argparse.ArgumentParser(description="Create an MSI Image Graph and calculate MSI Communities. Also, produce a JSON for GRINE.")
 	parser.add_argument("-d", "--datapath", action="store", dest="datapath", type=str, required=True, help="Path to HDF5 folder or file.")
 	parser.add_argument("-p", "--savepath", action='store', dest='savepath', type=str, required=True, help="Path to save the resulting JSON (including file name with .json ending).")
-	parser.add_argument("-sm", "--similarity", action="store", dest="similarity", type=str, choices=["pearson", "cosine", "euclidean", "euclidean2"], required=True, help="Similarity method to use.")
+	parser.add_argument("-sm", "--similarity", action="store", dest="similarity", type=str, choices=["pearson", "cosine", "euclidean", "euclidean2", "pcc", "dc", "phik", "phik2", "mfs", "hyper", "intmagan", "lstd", "pearson2", "cosine2", "hyper2", "lstd2", "contingency", "contingency2", "mdsi", "mdsi2", "mdsi3", "mdsi4", "ssim", "ssim2", "sr", "sr2"], required=True, help="Similarity method to use.")
 	parser.add_argument("-cm", "--community", action='store', dest='community', type=str, choices=["eigenvector", "louvain"], required=True, help="Community detection method to use.")
 	parser.add_argument("-tm", "--transformation", action="store", dest="transformation", type=str, choices=["pca", "statistics", "modularity_weighted", "modularity_unweighted"], required=True, help="Transformation method to use.")
-	parser.add_argument("-tp", "--transformationparams", default=None, action="store", dest="transformationparams", type=str, nargs="+", required=False, help="Transformation parameters to use (optional, otherwise default is applied). For PCA: start_value, end_value, stepnumber, normalize(bool), intersect-method(bool). For Statistics: mean function (mean or median), deviation function (std or mad), deviation multiplier constant C.")
+	parser.add_argument("-tp", "--transformationparams", default=None, action="store", dest="transformationparams", type=str, nargs="+", required=False, help="Transformation parameters to use (optional, otherwise default is applied). For PCA: start_value, end_value, stepnumber, normalize(bool), intersect-method(bool), sum-method(bool). For Statistics: mean function (mean or median), deviation function (std or mad), deviation multiplier constant C.")
 	parser.add_argument("-dr", "--dimreduce", action="store", dest="dimreduce", type=str, choices=["pca", "nmf", "umap", "tsne", "lsa", "ica", "kpca", "lda", "lle", "mds", "isomap", "spectralembedding"], required=False, help="Method to generate the dimension reduction data set, which is needed for the dimension reduction three component RGB reference image.")
 	args = parser.parse_args()
 		
@@ -252,7 +257,29 @@ def workflow_exec():
 		"pearson": calc_pearson_correlation,
 		"cosine": calc_cosine_similarity,
 		"euclidean": calc_euclidean_distance,
-		"euclidean2": calc_normalized_euclidean_distance
+		"euclidean2": calc_normalized_euclidean_distance,
+		"mfs": calc_multifeature,
+		"hyper": calc_hypergeometric,
+		"intmagan": calc_intmagan,
+		"lstd": calc_local_std_similarity,
+		"pearson2": calc_pearson_adj,
+		"cosine2": calc_cosine_adj,
+		"hyper2": calc_hypergeometric_adj,
+		"lstd2": calc_local_std_similarity_adj,
+		"contingency": calc_contingency,
+		"contingency2": calc_contingency_adj,
+		"mdsi": calc_mdsi,
+		"mdsi2": calc_mdsi_adj,
+		"mdsi3": calc_mdsi2,
+		"mdsi4": calc_mdsi2_adj,
+		"ssim": calc_ssim,
+		"ssim2": calc_ssim_adj,
+		"sr": calc_sr,
+		"sr2": calc_sr_adj,
+		"pcc": calc_partial_correlation_coefficient,
+		"dc": calc_distance_correlation,
+		"phik": calc_phik,
+		"phik2": calc_phik_adj,
 	}
 	
 
@@ -311,9 +338,9 @@ def workflow_exec():
 		except:
 			dataset_name = fnames[ds_idx]
 		json_dict = build_json(hierarchy_dict, h5_data, dataset_name, nx.from_numpy_array(adjacency_matrix), json_dict, threshold)
-		DR = method_dict[dimreduce](h5_file.values, 3)
-		embedding = DR.perform()
-		grine_dimreduce(h5_file, embedding, dataset_name, dimreduce, os.path.dirname(args.savepath))
+		#####DR = method_dict[dimreduce](h5_file.values, 3)
+		#####embedding = DR.perform()
+		#####grine_dimreduce(h5_file, embedding, dataset_name, dimreduce, os.path.dirname(args.savepath))
 
 	f = open(args.savepath, "w")
 	with f as outputfile:

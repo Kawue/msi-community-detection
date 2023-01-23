@@ -1,4 +1,3 @@
-import os
 import networkx as nx
 import numpy as np
 from multiprocessing import Pool, cpu_count
@@ -11,84 +10,72 @@ import skimage.filters as skif
 from kode.community_detection import *
 from kode.mmm_own import *
 
-def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normalization, intersect, sum, savepath):
-	threshold_list = np.linspace(similarity_intervall[0], similarity_intervall[1], int(stepnumber))
-	
+def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normalization, intersect):
+	pool = Pool(processes=1)
+	threshold_list = np.linspace(similarity_intervall[0], similarity_intervall[1], stepnumber)
+
 	# Calculate Average Clustering Coefficient
-	acc_result = calc_topology_pca_method(similarity_matrix, threshold_list, calc_acc, (), False)
+	acc_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, calc_acc, (), False,))
 	# Calculate Global Efficiency
-	### eff_result = calc_topology_pca_method(similarity_matrix, threshold_list, calc_global_eff, (), False)
+	eff_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, calc_global_eff, (), False,))
 	# Calculate total number of edges
-	nb_edges_result = calc_topology_pca_method(similarity_matrix, threshold_list, count_total_nb_edges, (), False)
+	nb_edges_result = pool.apply_async(calc_topology_pca_method, args=(similarity_matrix, threshold_list, count_total_nb_edges, (), False,))
+
+	acc_result.wait()
+	eff_result.wait()
+	nb_edges_result.wait()
 
 	# Normalize every value into [0,1]
-	acc_values = normalize(acc_result)
-	### eff_values = normalize(eff_result)
-	nb_edges_values = normalize(nb_edges_result)
+	acc_values = normalize(acc_result.get())
+	eff_values = normalize(eff_result.get())
+	nb_edges_values = normalize(nb_edges_result.get())
 
 	# Use the total number of edges as baseline
 	acc_diff_edges = np.array([x - y for x, y in zip(acc_values, nb_edges_values)])
-	### eff_diff_edges = np.array([x - y for x, y in zip(eff_values, nb_edges_values)])
+	eff_diff_edges = np.array([x - y for x, y in zip(eff_values, nb_edges_values)])
 	if normalization:
 		acc_diff_edges = (acc_diff_edges - np.amin(acc_diff_edges)) / (np.amax(acc_diff_edges) - np.amin(acc_diff_edges))
-		### eff_diff_edges = (eff_diff_edges - np.amin(eff_diff_edges)) / (np.amax(eff_diff_edges) - np.amin(eff_diff_edges))
+		eff_diff_edges = (eff_diff_edges - np.amin(eff_diff_edges)) / (np.amax(eff_diff_edges) - np.amin(eff_diff_edges))
 	# Build a matrix with baselined ACC and Global Efficiency. Samples = ACC & Eff, Features = Threshold
-	### matrix = np.array([acc_diff_edges, eff_diff_edges])
+	matrix = np.array([acc_diff_edges, eff_diff_edges])
 	# Samples = Threshold, Features = ACC & Eff
-	### matrix = matrix.T
+	matrix = matrix.T
 
 	# Calculate PCA transformed data matrix
-	### matrix_transformed = pca(matrix.copy(), False, 2)
+	matrix_transformed = pca(matrix.copy(), False, 2)
 
 	# Extract the first PCA Component, i.e. data projection on the first pca axis (eigenvector)
-	### first_pca_component = matrix_transformed[:, 0]
-	### second_pca_component = matrix_transformed[:, 1]
-	### mean_pca_component = matrix_transformed.mean(axis=1)
+	first_pca_component = matrix_transformed[:, 0]
+	second_pca_component = matrix_transformed[:, 1]
+	mean_pca_component = matrix_transformed.mean(axis=1)
 
 	# Plotting stuff
-	if savepath:
-		plt.figure()
-		#fig = plt.gcf()
-		#fig.set_size_inches(32, 18)
-		#fig.tight_layout()
-		plt.title("QGP Edge Reduction", fontsize=20, y=1.01)
-		plt.xlabel(r"Candidate Thresholds ($\mathbf{\gamma}$)", fontsize=20, labelpad=15)
-		plt.ylabel("Values", fontsize=20, labelpad=15)
-		plt.xticks(size=15)
-		plt.yticks(size=15)
-		vmin = np.amin([nb_edges_values, acc_values, acc_diff_edges]) #np.amin([first_pca_component, second_pca_component, nb_edges_values, acc_values, eff_values, acc_diff_edges, eff_diff_edges])
-		vmax = np.amax([nb_edges_values, acc_values, acc_diff_edges]) #np.amax([first_pca_component, second_pca_component, nb_edges_values, acc_values, eff_values, acc_diff_edges, eff_diff_edges])
-		plt.axvline(x=np.amin(similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]), color="k", linestyle="dashed")
-		plt.axvline(x=np.amax(similarity_matrix[np.triu_indices_from(similarity_matrix, k=1)]), color="k", linestyle="dashed")
-		threshold_list = threshold_list[:]
-		#plt.plot(threshold_list, second_pca_component, "-X", color="hotpink", label=r"$\mathbf{y_1}$")
-		#plt.plot(threshold_list, mean_pca_component, "-d", color="deeppink", label=r"$\mathbf{y}_{mean}$")
-		plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$E$")
-		### plt.plot(threshold_list, eff_values[:], "-d", color="deeppink", label=r"$\mathbf{\Lambda}}_e$")
-		plt.plot(threshold_list, acc_values[:], "-P", color="red", label=r"$\Lambda$")
-		### plt.plot(threshold_list, eff_diff_edges[:], "-d", color="hotpink", label=r"$\mathbf{\hat{\Lambda}}_e$")
-		plt.plot(threshold_list, acc_diff_edges[:], "-s", color="dodgerblue", label=r"$\hat{\Lambda}$")
-		### plt.plot(threshold_list, acc_diff_edges[:] + eff_diff_edges[:], "-P", color="orange", label=r"$\mathbf{\eta}^\mathrm{sum}$")
-		### plt.plot(threshold_list, first_pca_component, "-X", color="red", label=r"$\mathbf{\eta}^\mathrm{pca}$")
-		plt.legend(fontsize=15)
-		plt.show()
-		if not os.path.exists(os.path.join(savepath, "community_detection_plots")):
-			os.makedirs(os.path.join(savepath, "community_detection_plots"))
-		plt.savefig(os.path.join(savepath, "community_detection_plots", "edge_reduction_plot.png"),bbox_inches='tight')
+	
+	#plt.figure()
+	#plt.title("Network Measures", fontsize=20, y=1.01)
+	#plt.xlabel("Candidate Thresholds ($\mathbf{t}$)", fontsize=20, labelpad=15)
+	#plt.ylabel("Measure Values", fontsize=20, labelpad=15)
+	#plt.xticks(size=15)
+	#plt.yticks(size=15)
+	#threshold_list = threshold_list[:]
+	#plt.plot(threshold_list, first_pca_component, "-X", color="red", label="$\mathbf{y0}$")
+	#plt.plot(threshold_list, second_pca_component, "-X", color="hotpink", label="$\mathbf{y1}$")
+	#plt.plot(threshold_list, mean_pca_component, "-d", color="deeppink", label="$\mathbf{ym}$")
+	#plt.plot(threshold_list, nb_edges_values[:], "-^", color="black", label=r"$\mathbf{\nu}^{N_E}$")
+	#plt.plot(threshold_list, acc_values[:], "-s", color="blue", label=r"$\mathbf{\nu}^\zeta$")
+	#plt.plot(threshold_list, eff_values[:], "-D", color="peru", label=r"$\mathbf{\nu}^\xi$")
+	#plt.plot(threshold_list, acc_diff_edges[:], "-p", color="darkviolet", label=r"$\mathbf{\eta}^\zeta$")
+	#plt.plot(threshold_list, eff_diff_edges[:], "-o", color="brown", label=r"$\mathbf{\eta}^\xi$")
+	#plt.legend(fontsize=15)
+	#plt.show()
 	
 
-	
-	### if intersect or sum:
-	### 	if intersect:
-	### 		idx = np.where(np.diff(np.sign(acc_diff_edges-eff_diff_edges)))[0][-1]
-	### 		t = threshold_list[idx]
-	### 		print("Intersection method used.")
-	### 	if sum:
-	### 		idx = np.argmax(acc_diff_edges[:] + eff_diff_edges[:])
-	### 		t = threshold_list[idx]
-	### 	if intersect and sum:
-	### 		raise ValueError("Choose either intersect or sum ort none.")
-	### else:
+
+	if intersect:
+		idx = np.where(np.diff(np.sign(acc_diff_edges-eff_diff_edges)))[0][-1]
+		t = threshold_list[idx]
+		print("Intersection method used.")
+	else:
 		'''
 		max_value = np.amax(first_pca_component)
 		max_idx = np.argmax(first_pca_component)
@@ -101,27 +88,22 @@ def transform_by_pca(similarity_matrix, similarity_intervall, stepnumber, normal
 		print("Maximum Value of First PCA Component: " + str(max_value))
 		print("Index of Maximum of First PCA Component: " + str(max_idx))
 		'''
-	### 	if first_pca_component[0] > 0 and first_pca_component[-1] > 0:
-	### 		print()
-	### 		print("Second PCA Component is selected!")
-	### 		print()
-			#max_value = np.amax(second_pca_component)
-			#max_idx = np.argmax(second_pca_component)
-	### 		max_value = np.amin(first_pca_component)
-	### 		max_idx = np.argmin(first_pca_component)
-	### 		t = threshold_list[max_idx]
-	### 	else:
-	### 		print()
-	### 		print("First PCA Component is selected!")
-	### 		print()
-	### 		max_value = np.amax(first_pca_component)
-	### 		max_idx = np.argmax(first_pca_component)
-	### 		t = threshold_list[max_idx]
-	### 	print("Maximum Value of First PCA Component: " + str(max_value))
-	### 	print("Index of Maximum of First PCA Component: " + str(max_idx))
-	max_value = np.amax(acc_diff_edges) ###
-	max_idx = np.argmax(acc_diff_edges) ###
-	t = threshold_list[max_idx] ###
+		if first_pca_component[0] > 0 and first_pca_component[-1] > 0:
+			print()
+			print("Second PCA Component is selected!")
+			print()
+			max_value = np.amax(second_pca_component)
+			max_idx = np.argmax(second_pca_component)
+			t = threshold_list[max_idx]
+		else:
+			print()
+			print("First PCA Component is selected!")
+			print()
+			max_value = np.amax(first_pca_component)
+			max_idx = np.argmax(first_pca_component)
+			t = threshold_list[max_idx]
+		print("Maximum Value of First PCA Component: " + str(max_value))
+		print("Index of Maximum of First PCA Component: " + str(max_idx))
 	print("Selected Threshold by PCA: " + str(t))
 
 	return transform_by_global_statistics(similarity_matrix, t, 0, 0), t
@@ -184,7 +166,7 @@ def calc_eff(G, u, v):
 		return 0
 
 
-# Calculate the average Efficiency of a network
+# Calculate the Global Efficiency of a network
 def calc_global_eff(graph):
 	G = graph
 	n = len(G)

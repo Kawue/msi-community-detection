@@ -9,7 +9,15 @@ from sklearn.metrics.pairwise import cosine_similarity as cosim
 from scipy.spatial.distance import pdist
 from scipy.spatial.distance import squareform
 from numpy import sqrt
-
+from kode.hypergeometric_similarity import *
+from kode.multi_feature_similarity_variants import *
+from kode.gradient_measures import *
+from kode.local_standard_deviation_based_image_quality import *
+from kode.mean_deviation_similarity_index import *
+from kode.ssim_variants import *
+from kode.shared_residual_similarity import *
+from kode.contingency_similarity import *
+import matplotlib.pyplot as plt
 
 def calc_pearson_correlation(data_matrix):
 	# Calculate pearson correlation matrix
@@ -22,6 +30,19 @@ def calc_pearson_correlation(data_matrix):
 	print("Pearson Matrix Maximum: " + str(np.amax(upper_triangle)))
 
 	return pearson_matrix
+
+def calc_spearman_correlation(data_matrix):
+	# Calculate pearson correlation matrix
+	spearman_matrix = sp.stats.spearmanr(data_matrix, axis=1)[1]
+
+	# Calculate upper half of pearson matrix without diagonal
+	upper_triangle = spearman_matrix[np.triu_indices_from(spearman_matrix, k=1)]
+	# Find similarity minimum and maximum
+	print("Pearson Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Pearson Matrix Maximum: " + str(np.amax(upper_triangle)))
+
+	return spearman_matrix
+
 
 
 def calc_euclidean_distance(data_matrix):
@@ -127,7 +148,8 @@ def calc_jaccard_score(data_matrix_binary, data_matrix):
 	return jaccard_matrix
 
 
-def calc_partial_correlation_coefficient(pearson_similarity_matrix):
+def calc_partial_correlation_coefficient(data_matrix):
+	pearson_similarity_matrix = calc_pearson_correlation(data_matrix)
 	if np.linalg.matrix_rank(pearson_similarity_matrix) == pearson_similarity_matrix.shape[0]:
 		inverse_matrix = sp.linalg.inv(pearson_similarity_matrix)
 	else:
@@ -138,6 +160,10 @@ def calc_partial_correlation_coefficient(pearson_similarity_matrix):
 	for idx_i, _ in enumerate(partial_coerr_matrix):
 		for idx_j, _ in enumerate(partial_coerr_matrix[idx_i]):
 			partial_coerr_matrix[idx_i,idx_j] = -inverse_matrix[idx_i,idx_j]/np.sqrt(inverse_matrix[idx_i,idx_i] * inverse_matrix[idx_j,idx_j])
+
+	upper_triangle = partial_coerr_matrix[np.triu_indices_from(partial_coerr_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
 
 	return partial_coerr_matrix
 
@@ -158,38 +184,400 @@ def calc_distance_correlation(data_matrix):
 			dVar_b = (B * B).sum() / n ** 2
 			dCor = sqrt(dCov_ab) / sqrt(sqrt(dVar_a) * sqrt(dVar_b))
 			dCor_matrix[idx_a, idx_b] = dCor
-
+	upper_triangle = dCor_matrix[np.triu_indices_from(dCor_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
 	return dCor_matrix
 
 
 
-def contingency(img1, img2):
-	t = max(img1.max(), img2.max()) * 0.7
-	u = max(img1.max(), img2.max()) * 0.1
-	c = np.zeros((3,3))
-	for i in range(len(img1)):
-		if img1[i] >= t and img2[i] >= t:
-			c[0,0] += 1
-		elif img1[i] >= t and u <= img2[i] < t:
-			c[0,1] += 1
-		elif u <= img1[i] < t and img2[i] >= t:
-			c[1,0] += 1
-		elif u <= img1[i] < t and u <= img2[i] < t:
-			c[1,1] += 1
-		elif img1[i] >= t and img2[i] < u:
-			c[0,2] += 1
-		elif u <= img1[i] < t and img2[i] < u:
-			c[1,2] += 1
-		elif img1[i] < u and img2[i] >= t:
-			c[2,0] += 1
-		elif img1[i] < u and u <= img2[i] < t:
-			c[2,1] += 1
-		elif img1[i] < u and img2[i] < u:
-			c[2,2] += 1
-		else:
-			print("Something went wrong!")
+def create_index_mask(dframe, x_pixel_identifier="grid_x", y_pixel_identifier="grid_y"):
+	x = (dframe.index.get_level_values(x_pixel_identifier)).astype(int)
+	y = (dframe.index.get_level_values(y_pixel_identifier)).astype(int)
+	img = np.zeros((y.max() + 1, x.max() + 1))
+	img[(y,x)] = 1
+	indices = np.where(img==1)
+	#plt.imshow(img)
+	#plt.show()
+	return indices, img
 
-	p = len(img1)
-	s = (2*c[0,0] + 1.5*c[1,1] + c[2,2]) - (np.trace(c, offset=1) + np.trace(c, offset=-1)) - (2 * (np.trace(c, offset=2) + np.trace(c, offset=-2)))
-	m = s/p
-	return m
+def create_img(dframe, intens):
+	grid_x = np.array(dframe.index.get_level_values("grid_x")).astype(int)
+	grid_y = np.array(dframe.index.get_level_values("grid_y")).astype(int)
+	height = grid_y.max() + 1
+	width = grid_x.max() + 1
+	img = np.zeros((height, width))
+	img[(grid_y, grid_x)] = np.array(intens)
+	return img
+
+def calc_multifeature(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, _ = multi_feature_similarity(X, Y, index_mask, weighted=False, wplus=False, pooling="max", win_size=13, sigma=None)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+def calc_intmagan(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, _ = int_mag_an(X, Y, index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+	
+
+def calc_hypergeometric(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score = hypergeometric_similarity(X, Y, index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+	
+
+def calc_local_std_similarity(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, lsdbiq_map = lsdbiq(X, Y, win_size=13, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+
+from scipy.stats import pearsonr
+from scipy.ndimage import median_filter
+from scipy.stats.mstats import winsorize
+import skimage.filters as skif
+import pandas as pd
+import phik
+
+def prepro(X, index_mask):
+	X = winsorize(X, limits=[0, 0.01])
+	t = skif.threshold_otsu(X[index_mask], nbins=256)
+	X[X < t] = 0
+	X = median_filter(X, size=3)
+	return X
+
+def prepro2(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	grid_x = np.array(dframe.index.get_level_values("grid_x")).astype(int)
+	grid_y = np.array(dframe.index.get_level_values("grid_y")).astype(int)
+	for idx, sample in enumerate(data_matrix):
+		X = create_img(dframe, sample)
+		X = winsorize(X, limits=[0, 0.01])
+		t = skif.threshold_otsu(X[index_mask], nbins=256)
+		X[X < t] = 0
+		X = median_filter(X, size=5)
+		data_matrix[idx] = X[(grid_y, grid_x)]
+	return data_matrix
+
+def calc_phik(dframe):
+	sim_matrix = dframe.phik_matrix().values
+		# Calculate upper half of pearson matrix without diagonal
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	# Find similarity minimum and maximum
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+
+	return sim_matrix
+
+
+def calc_phik_adj(dframe):
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	sim_matrix = dframe.phik_matrix().values
+		# Calculate upper half of pearson matrix without diagonal
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	# Find similarity minimum and maximum
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+
+	return sim_matrix
+
+
+def calc_pearson_adj(dframe):
+	data_matrix = prepro2(dframe)
+	pearson_matrix = corrcoef(data_matrix)
+	upper_triangle = pearson_matrix[np.triu_indices_from(pearson_matrix, k=1)]
+	print("Pearson Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Pearson Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return pearson_matrix
+	'''
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			Xp = prepro(X, index_mask)
+			Yp = prepro(Y, index_mask)
+			Xp = Xp[index_mask]
+			Yp = Yp[index_mask]
+	pearsonr(Xp, Yp)[0]
+	return?
+	'''
+
+def calc_cosine_adj(dframe):
+	data_matrix = prepro2(dframe)
+	cosim_matrix = cosim(data_matrix)
+	upper_triangle = cosim_matrix[np.triu_indices_from(cosim_matrix, k=1)]
+	print("Cosim Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Cosim Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return cosim_matrix
+	'''
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			Xp = prepro(X, index_mask)
+			Yp = prepro(Y, index_mask)
+			Xp = Xp[index_mask]
+			Yp = Yp[index_mask]
+	cosim(Xp[None,:], Yp[None,:])[0][0]
+	return ? '''
+
+def calc_hypergeometric_adj(dframe):
+	#data_matrix = dframe.values.transpose()
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score = hypergeometric_similarity(X, Y, index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+def calc_local_std_similarity_adj(dframe):
+	#data_matrix = dframe.values.transpose()
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, lsdbiq_map = lsdbiq(X, Y, win_size=13, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+def calc_contingency(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score = contingency(X, Y, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+
+def calc_contingency_adj(dframe):
+	#data_matrix = dframe.values.transpose()
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score = contingency(X, Y, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+
+def calc_mdsi(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			_, score, _ = mdsi(X, Y, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+
+def calc_mdsi_adj(dframe):
+	#data_matrix = dframe.values.transpose()
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			_, score, _ = mdsi(X, Y, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+def calc_mdsi2(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, _, _ = mdsi(X, Y, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+
+def calc_mdsi2_adj(dframe):
+	#data_matrix = dframe.values.transpose()
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, _, _ = mdsi(X, Y, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+	
+
+def calc_ssim(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score= compare_ssim4(X, Y, index_mask=index_mask, win_size=13)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+
+def calc_ssim_adj(dframe):
+	#data_matrix = dframe.values.transpose()
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, _ = compare_ssim(X, Y, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+def calc_sr(dframe):
+	data_matrix = dframe.values.transpose()
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, _, _, _, _, _, _  = shared_residual_similarity(X, Y, count_zeros=False, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
+
+
+
+def calc_sr_adj(dframe):
+	#data_matrix = dframe.values.transpose()
+	data_matrix = prepro2(dframe)
+	dframe = pd.DataFrame(data_matrix.T, index=dframe.index, columns=dframe.columns)
+	index_mask,_ = create_index_mask(dframe)
+	sim_matrix = np.zeros((data_matrix.shape[0], data_matrix.shape[0]))
+	for idx_a, sample_a in enumerate(data_matrix):
+		for idx_b, sample_b in enumerate(data_matrix):
+			X = create_img(dframe, sample_a)
+			Y = create_img(dframe, sample_b)
+			score, _, _, _, _, _, _ = shared_residual_similarity(X, Y, count_zeros=False, index_mask=index_mask)
+			sim_matrix[idx_a][idx_b] = score
+	upper_triangle = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+	print("Matrix Minimum: " + str(np.amin(upper_triangle)))
+	print("Matrix Maximum: " + str(np.amax(upper_triangle)))
+	return sim_matrix
